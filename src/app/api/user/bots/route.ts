@@ -36,10 +36,6 @@ const BaseFields = {
   ownerJids: jidListSchema,
   adminJids: jidListSchema,
   qrisServerId: z.string().trim().max(64).optional().nullable(),
-  paymentProvider: z
-    .enum(["eqris", "pakasir"])
-    .optional()
-    .nullable(),
 };
 
 const CreateSchema = z.object(BaseFields);

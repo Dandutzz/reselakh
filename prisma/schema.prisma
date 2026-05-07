@@ -228,13 +228,10 @@ model Bot {
   adminJids String?
 
   // Which QrisServer (provider+credentials) the bot uses for /buynow.
+  // The provider (eqris/pakasir/etc.) is derived from `qrisServer.provider`.
   // null => /buynow disabled.
   qrisServerId String?
   qrisServer   QrisServer? @relation(fields: [qrisServerId], references: [id], onDelete: SetNull)
-
-  // Redundant denormalised provider toggle for convenience in UI/forms.
-  // Source of truth for credentials remains `qrisServer.provider` once set.
-  paymentProvider String? // eqris | pakasir
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

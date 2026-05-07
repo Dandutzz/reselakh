@@ -28,7 +28,6 @@ interface BotData {
   ownerJids: string | null;
   adminJids: string | null;
   qrisServerId: string | null;
-  paymentProvider: string | null;
 }
 
 interface QrisServerOption {
@@ -50,7 +49,6 @@ interface FormState {
   ownerJids: string;
   adminJids: string;
   qrisServerId: string;
-  paymentProvider: string;
 }
 
 const emptyForm = (): FormState => ({
@@ -65,7 +63,6 @@ const emptyForm = (): FormState => ({
   ownerJids: "",
   adminJids: "",
   qrisServerId: "",
-  paymentProvider: "",
 });
 
 export default function BotsPage() {
@@ -111,7 +108,6 @@ export default function BotsPage() {
       ownerJids: bot.ownerJids || "",
       adminJids: bot.adminJids || "",
       qrisServerId: bot.qrisServerId || "",
-      paymentProvider: bot.paymentProvider || "",
     });
     setError(null);
     setModal(true);
@@ -131,7 +127,6 @@ export default function BotsPage() {
       ownerJids: form.ownerJids || null,
       adminJids: form.adminJids || null,
       qrisServerId: form.qrisServerId || null,
-      paymentProvider: form.paymentProvider || null,
     };
     const url = "/api/user/bots";
     const method = editingId ? "PATCH" : "POST";
@@ -414,22 +409,6 @@ export default function BotsPage() {
                           {s.name} ({s.provider})
                         </option>
                       ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">
-                    Payment Provider Override
-                  </label>
-                  <select
-                    value={form.paymentProvider}
-                    onChange={(e) =>
-                      setForm({ ...form, paymentProvider: e.target.value })
-                    }
-                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent"
-                  >
-                    <option value="">— Ikuti QRIS Server —</option>
-                    <option value="eqris">EQRIS</option>
-                    <option value="pakasir">Pakasir</option>
                   </select>
                 </div>
                 <input

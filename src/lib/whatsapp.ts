@@ -232,7 +232,6 @@ async function handleWhatsAppMessage(
       ownerJids: true,
       adminJids: true,
       qrisServerId: true,
-      paymentProvider: true,
     },
   });
   if (!botConfig) return;
