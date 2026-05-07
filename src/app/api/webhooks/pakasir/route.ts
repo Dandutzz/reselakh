@@ -68,8 +68,8 @@ export async function POST(request: Request) {
           invoiceId: buildInvoiceId(payment.orderId, "AKH"),
           buyerNumber,
           telegramId: payment.customer.chatId ?? null,
-          whatsappPhone: payment.customer.phone ?? payment.customer.jid ?? null,
-          email: payment.customer.email ?? null,
+          telegramUsername:
+            bot?.type === "telegram" ? payment.customer.name : null,
           productName: result.productName,
           variationName: result.variationName,
           quantity: payment.qty ?? 1,

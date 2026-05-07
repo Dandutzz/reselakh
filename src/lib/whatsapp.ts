@@ -160,20 +160,6 @@ export async function startWhatsAppBot(botId: string): Promise<string | null> {
 }
 
 /**
- * Pull a `+62…` style phone number out of a WhatsApp JID. WA JIDs are
- * typically `628123…@s.whatsapp.net` or the privacy-mode variant `…@lid`
- * (which has no number to extract). Returns null when no digits can be
- * recovered.
- */
-function phoneFromJid(jid: string | null | undefined): string | null {
-  if (!jid) return null;
-  const m = jid.match(/^(\d+)@/);
-  if (!m) return null;
-  const digits = m[1] ?? "";
-  return digits ? `+${digits}` : null;
-}
-
-/**
  * Render the `#stock` reply: a BOT AUTO ORDER header followed by one
  * formatted card per active product listing each variation's code, stock,
  * price, and description. Top-3 products by sold count get the BEST SELLER
@@ -638,9 +624,6 @@ async function handleWhatsAppMessage(
         select: {
           id: true,
           createdAt: true,
-          email: true,
-          phone: true,
-          jid: true,
           chatId: true,
         },
       }),
@@ -657,9 +640,7 @@ async function handleWhatsAppMessage(
       invoiceId: buildInvoiceId(result.orderId, "AKH"),
       buyerNumber,
       telegramId: fullCustomer?.chatId ?? null,
-      whatsappPhone:
-        fullCustomer?.phone ?? phoneFromJid(fullCustomer?.jid ?? null),
-      email: fullCustomer?.email ?? null,
+      telegramUsername: null,
       productName: result.productName,
       variationName: result.variationName,
       quantity: qty,

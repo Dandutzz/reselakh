@@ -43,8 +43,8 @@ export interface SuccessCardData {
   invoiceId: string;
   buyerNumber: number | string;
   telegramId?: string | number | null;
-  whatsappPhone?: string | null;
-  email?: string | null;
+  /** Telegram @username (with or without leading @) — leave blank when unknown. */
+  telegramUsername?: string | null;
   productName: string;
   variationName: string;
   quantity: number;
@@ -78,13 +78,18 @@ function parseAccountLine(raw: string): {
  */
 export function formatSuccessCard(data: SuccessCardData): string {
   const lines: string[] = [];
-  lines.push("╭────〔 TRANSAKSI SUKSES 〕─");
-  lines.push("");
+  lines.push("╭────〔 TRANSAKSI SUKSES 〕───────");
   lines.push(`┊・Invoice ID : ${data.invoiceId}`);
+  lines.push(`┊・Nama Produk : ${data.productName}`);
+  lines.push(`┊・Nama Variasi : ${data.variationName}`);
   lines.push(`┊・ID Buyer : ${data.buyerNumber}`);
   lines.push(`┊・ID Tele Buyer : ${data.telegramId ?? "-"}`);
-  lines.push(`┊・No Hp Buyer : ${data.whatsappPhone ?? "-"}`);
-  lines.push(`┊・Email buyer : ${data.email ?? "-"}`);
+  const username = data.telegramUsername
+    ? data.telegramUsername.startsWith("@")
+      ? data.telegramUsername
+      : `@${data.telegramUsername}`
+    : "";
+  lines.push(`┊・Username Telegram: ${username}`.trimEnd());
   lines.push(`┊・Jumlah Beli : ${data.quantity}`);
   lines.push(`┊・Jumlah Akun didapat : ${data.quantity}`);
   lines.push(`┊・Harga : ${rupiah(data.amount)}`);
@@ -94,7 +99,8 @@ export function formatSuccessCard(data: SuccessCardData): string {
   lines.push(
     `┊・Tanggal/Jam Transaksi : ${formatTransactionDate(data.date ?? new Date())}`,
   );
-  lines.push("╰┈┈┈┈┈┈┈┈");
+  lines.push("╰┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈");
+  lines.push("");
   lines.push("");
   lines.push("Akun premium kamu:");
   lines.push("");
