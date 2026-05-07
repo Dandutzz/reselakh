@@ -1,7 +1,31 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
+import { z } from "zod";
+import { handleApiError, requireAuth, ValidationError } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { generateSlug } from "@/lib/utils";
+import { generateUniqueSlug } from "@/lib/utils";
+import { idSchema, moneySchema, parseJson } from "@/lib/validate";
+
+const CreateSchema = z.object({
+  categoryId: idSchema,
+  name: z.string().trim().min(1).max(120),
+  description: z.string().max(2000).optional().nullable(),
+  price: moneySchema,
+  image: z.string().url().max(500).optional().nullable(),
+  banner: z.string().url().max(500).optional().nullable(),
+});
+
+const UpdateSchema = z.object({
+  id: idSchema,
+  categoryId: idSchema.optional(),
+  name: z.string().trim().min(1).max(120).optional(),
+  description: z.string().max(2000).optional().nullable(),
+  price: moneySchema.optional(),
+  image: z.string().url().max(500).optional().nullable(),
+  banner: z.string().url().max(500).optional().nullable(),
+  isActive: z.boolean().optional(),
+});
+
+const DeleteSchema = z.object({ id: idSchema });
 
 export async function GET() {
   try {
@@ -15,55 +39,99 @@ export async function GET() {
       orderBy: { createdAt: "desc" },
     });
     return NextResponse.json({ products });
-  } catch {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  } catch (err) {
+    return handleApiError("user/products:GET", err);
   }
 }
 
 export async function POST(request: Request) {
   try {
     const session = await requireAuth();
-    const data = await request.json();
+    const data = await parseJson(request, CreateSchema);
+
+    const category = await prisma.category.findFirst({
+      where: { id: data.categoryId, userId: session.id },
+      select: { id: true },
+    });
+    if (!category) throw new ValidationError("Kategori tidak ditemukan");
+
+    const slug = await generateUniqueSlug(data.name, async (s) => {
+      const existing = await prisma.product.findFirst({
+        where: { userId: session.id, slug: s },
+        select: { id: true },
+      });
+      return !existing;
+    });
+
     const product = await prisma.product.create({
       data: {
         userId: session.id,
         categoryId: data.categoryId,
         name: data.name,
-        slug: generateSlug(data.name),
-        description: data.description,
+        slug,
+        description: data.description ?? null,
         price: data.price,
-        image: data.image,
-        banner: data.banner,
+        image: data.image ?? null,
+        banner: data.banner ?? null,
       },
     });
     return NextResponse.json({ success: true, product });
-  } catch {
-    return NextResponse.json({ error: "Gagal membuat produk" }, { status: 500 });
+  } catch (err) {
+    return handleApiError("user/products:POST", err);
   }
 }
 
 export async function PATCH(request: Request) {
   try {
     const session = await requireAuth();
-    const { id, ...data } = await request.json();
-    if (data.name) data.slug = generateSlug(data.name);
-    const product = await prisma.product.update({
+    const { id, ...rest } = await parseJson(request, UpdateSchema);
+
+    const owned = await prisma.product.findFirst({
       where: { id, userId: session.id },
-      data,
+      select: { id: true },
     });
+    if (!owned) throw new ValidationError("Produk tidak ditemukan");
+
+    if (rest.categoryId) {
+      const category = await prisma.category.findFirst({
+        where: { id: rest.categoryId, userId: session.id },
+        select: { id: true },
+      });
+      if (!category) throw new ValidationError("Kategori tidak ditemukan");
+    }
+
+    const data: Record<string, unknown> = { ...rest };
+    if (rest.name) {
+      data.slug = await generateUniqueSlug(rest.name, async (s) => {
+        const existing = await prisma.product.findFirst({
+          where: { userId: session.id, slug: s, NOT: { id } },
+          select: { id: true },
+        });
+        return !existing;
+      });
+    }
+
+    const product = await prisma.product.update({ where: { id }, data });
     return NextResponse.json({ success: true, product });
-  } catch {
-    return NextResponse.json({ error: "Gagal update produk" }, { status: 500 });
+  } catch (err) {
+    return handleApiError("user/products:PATCH", err);
   }
 }
 
 export async function DELETE(request: Request) {
   try {
     const session = await requireAuth();
-    const { id } = await request.json();
-    await prisma.product.delete({ where: { id, userId: session.id } });
+    const { id } = await parseJson(request, DeleteSchema);
+
+    const owned = await prisma.product.findFirst({
+      where: { id, userId: session.id },
+      select: { id: true },
+    });
+    if (!owned) throw new ValidationError("Produk tidak ditemukan");
+
+    await prisma.product.delete({ where: { id } });
     return NextResponse.json({ success: true });
-  } catch {
-    return NextResponse.json({ error: "Gagal hapus produk" }, { status: 500 });
+  } catch (err) {
+    return handleApiError("user/products:DELETE", err);
   }
 }

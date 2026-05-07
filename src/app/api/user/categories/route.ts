@@ -1,7 +1,25 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
+import { z } from "zod";
+import { handleApiError, requireAuth, ValidationError } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { generateSlug } from "@/lib/utils";
+import { generateUniqueSlug } from "@/lib/utils";
+import { idSchema, parseJson } from "@/lib/validate";
+
+const CreateSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  icon: z.string().max(100).optional().nullable(),
+  sortOrder: z.number().int().min(0).max(10_000).optional(),
+});
+
+const UpdateSchema = z.object({
+  id: idSchema,
+  name: z.string().trim().min(1).max(80).optional(),
+  icon: z.string().max(100).optional().nullable(),
+  sortOrder: z.number().int().min(0).max(10_000).optional(),
+  isActive: z.boolean().optional(),
+});
+
+const DeleteSchema = z.object({ id: idSchema });
 
 export async function GET() {
   try {
@@ -12,52 +30,82 @@ export async function GET() {
       orderBy: { sortOrder: "asc" },
     });
     return NextResponse.json({ categories });
-  } catch {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  } catch (err) {
+    return handleApiError("user/categories:GET", err);
   }
 }
 
 export async function POST(request: Request) {
   try {
     const session = await requireAuth();
-    const data = await request.json();
+    const data = await parseJson(request, CreateSchema);
+
+    const slug = await generateUniqueSlug(data.name, async (s) => {
+      const existing = await prisma.category.findFirst({
+        where: { userId: session.id, slug: s },
+        select: { id: true },
+      });
+      return !existing;
+    });
+
     const category = await prisma.category.create({
       data: {
         userId: session.id,
         name: data.name,
-        slug: generateSlug(data.name),
-        icon: data.icon,
-        sortOrder: data.sortOrder || 0,
+        slug,
+        icon: data.icon ?? null,
+        sortOrder: data.sortOrder ?? 0,
       },
     });
     return NextResponse.json({ success: true, category });
-  } catch {
-    return NextResponse.json({ error: "Gagal membuat kategori" }, { status: 500 });
+  } catch (err) {
+    return handleApiError("user/categories:POST", err);
   }
 }
 
 export async function PATCH(request: Request) {
   try {
     const session = await requireAuth();
-    const { id, ...data } = await request.json();
-    if (data.name) data.slug = generateSlug(data.name);
-    const category = await prisma.category.update({
+    const { id, ...rest } = await parseJson(request, UpdateSchema);
+
+    const owned = await prisma.category.findFirst({
       where: { id, userId: session.id },
-      data,
+      select: { id: true },
     });
+    if (!owned) throw new ValidationError("Kategori tidak ditemukan");
+
+    const data: Record<string, unknown> = { ...rest };
+    if (rest.name) {
+      data.slug = await generateUniqueSlug(rest.name, async (s) => {
+        const existing = await prisma.category.findFirst({
+          where: { userId: session.id, slug: s, NOT: { id } },
+          select: { id: true },
+        });
+        return !existing;
+      });
+    }
+
+    const category = await prisma.category.update({ where: { id }, data });
     return NextResponse.json({ success: true, category });
-  } catch {
-    return NextResponse.json({ error: "Gagal update kategori" }, { status: 500 });
+  } catch (err) {
+    return handleApiError("user/categories:PATCH", err);
   }
 }
 
 export async function DELETE(request: Request) {
   try {
     const session = await requireAuth();
-    const { id } = await request.json();
-    await prisma.category.delete({ where: { id, userId: session.id } });
+    const { id } = await parseJson(request, DeleteSchema);
+
+    const owned = await prisma.category.findFirst({
+      where: { id, userId: session.id },
+      select: { id: true },
+    });
+    if (!owned) throw new ValidationError("Kategori tidak ditemukan");
+
+    await prisma.category.delete({ where: { id } });
     return NextResponse.json({ success: true });
-  } catch {
-    return NextResponse.json({ error: "Gagal hapus kategori" }, { status: 500 });
+  } catch (err) {
+    return handleApiError("user/categories:DELETE", err);
   }
 }

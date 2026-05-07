@@ -1,7 +1,13 @@
-import { Bot as GrammyBot } from "grammy";
+import { Bot as GrammyBot, GrammyError, HttpError } from "grammy";
 import { prisma } from "./prisma";
+import { escapeMarkdownV2 } from "./utils";
+import { placeBotOrder } from "./order";
 
 const activeBots = new Map<string, GrammyBot>();
+
+function md(text: string | number | null | undefined): string {
+  return escapeMarkdownV2(String(text ?? ""));
+}
 
 export async function startTelegramBot(botId: string) {
   const botConfig = await prisma.bot.findUnique({
@@ -20,7 +26,9 @@ export async function startTelegramBot(botId: string) {
   const bot = new GrammyBot(botConfig.token);
 
   bot.command("start", async (ctx) => {
-    const welcome = botConfig.welcomeMsg || `Selamat datang di ${botConfig.name}! Ketik /menu untuk melihat produk.`;
+    const welcome =
+      botConfig.welcomeMsg ||
+      `Selamat datang di ${botConfig.name}! Ketik /menu untuk melihat produk.`;
     await ctx.reply(welcome);
   });
 
@@ -32,7 +40,10 @@ export async function startTelegramBot(botId: string) {
           where: { isActive: true },
           include: {
             variations: {
-              include: { _count: { select: { stocks: { where: { isSold: false } } } } },
+              where: { isActive: true },
+              include: {
+                _count: { select: { stocks: { where: { isSold: false } } } },
+              },
             },
           },
         },
@@ -46,21 +57,25 @@ export async function startTelegramBot(botId: string) {
 
     let text = "📦 *Daftar Produk*\n\n";
     for (const cat of categories) {
-      text += `📁 *${cat.name}*\n`;
+      text += `📁 *${md(cat.name)}*\n`;
       for (const prod of cat.products) {
         const totalStock = prod.variations.reduce(
           (sum, v) => sum + v._count.stocks,
-          0
+          0,
         );
-        text += `  ├ ${prod.name} - Rp ${prod.price.toLocaleString("id-ID")} (Stock: ${totalStock})\n`;
+        text += `  ├ ${md(prod.name)} \\- Rp ${md(
+          prod.price.toLocaleString("id-ID"),
+        )} \\(Stock: ${totalStock}\\)\n`;
         for (const v of prod.variations) {
-          text += `  │  └ ${v.name} [${v.code}] - Rp ${v.price.toLocaleString("id-ID")} (${v._count.stocks})\n`;
+          text += `  │  └ ${md(v.name)} \\[${md(v.code)}\\] \\- Rp ${md(
+            v.price.toLocaleString("id-ID"),
+          )} \\(${v._count.stocks}\\)\n`;
         }
       }
       text += "\n";
     }
-    text += "Untuk order ketik: /order [kode_variasi] [jumlah]";
-    await ctx.reply(text, { parse_mode: "Markdown" });
+    text += "Untuk order ketik: /order \\[kode\\] \\[jumlah\\]";
+    await ctx.reply(text, { parse_mode: "MarkdownV2" });
   });
 
   bot.command("order", async (ctx) => {
@@ -69,63 +84,51 @@ export async function startTelegramBot(botId: string) {
       return;
     }
 
-    const args = ctx.message?.text?.split(" ").slice(1) || [];
+    const args = ctx.message?.text?.split(/\s+/).slice(1) || [];
     if (args.length < 1) {
-      await ctx.reply("Format: /order [kode_variasi] [jumlah]\nContoh: /order NETFLIX1 1");
+      await ctx.reply(
+        "Format: /order [kode_variasi] [jumlah] [voucher]\nContoh: /order NETFLIX1 1 PROMO10",
+      );
       return;
     }
 
-    const code = args[0];
+    const code = args[0]!;
     const qty = parseInt(args[1] || "1");
+    const voucherCode = args[2] || undefined;
 
-    const variation = await prisma.productVariation.findFirst({
-      where: { code, product: { userId: botConfig.userId, isActive: true } },
-      include: { product: true },
+    const result = await placeBotOrder({
+      ownerUserId: botConfig.userId,
+      code,
+      qty,
+      source: "telegram",
+      voucherCode,
     });
 
-    if (!variation) {
-      await ctx.reply("Produk tidak ditemukan.");
+    if (!result.ok) {
+      await ctx.reply(result.error);
       return;
     }
 
-    const stocks = await prisma.stock.findMany({
-      where: { variationId: variation.id, isSold: false },
-      take: qty,
-    });
-
-    if (stocks.length < qty) {
-      await ctx.reply(`Stock tidak cukup. Tersedia: ${stocks.length}`);
-      return;
+    const lines = [
+      `✅ *Order Berhasil\\!*`,
+      ``,
+      `Produk: ${md(result.productName)}`,
+      `Variasi: ${md(result.variationName)}`,
+      `Jumlah: ${qty}`,
+      `Subtotal: Rp ${md(result.subtotal.toLocaleString("id-ID"))}`,
+    ];
+    if (result.discount > 0) {
+      lines.push(
+        `Voucher \\(${md(result.voucherCode || "")}\\): \\-Rp ${md(result.discount.toLocaleString("id-ID"))}`,
+      );
     }
-
-    const totalPrice = variation.price * qty;
-    const accountData = stocks.map((s) => s.data).join("\n");
-
-    await prisma.$transaction([
-      ...stocks.map((s) =>
-        prisma.stock.update({
-          where: { id: s.id },
-          data: { isSold: true, soldAt: new Date() },
-        })
-      ),
-      prisma.order.create({
-        data: {
-          userId: botConfig.userId,
-          productId: variation.product.id,
-          variationId: variation.id,
-          quantity: qty,
-          totalPrice,
-          status: "completed",
-          accountData,
-          source: "telegram",
-        },
-      }),
-    ]);
-
-    await ctx.reply(
-      `✅ *Order Berhasil!*\n\nProduk: ${variation.product.name}\nVariasi: ${variation.name}\nJumlah: ${qty}\nTotal: Rp ${totalPrice.toLocaleString("id-ID")}\n\n📋 *Data Akun:*\n${accountData}`,
-      { parse_mode: "Markdown" }
+    lines.push(
+      `Total: Rp ${md(result.totalPrice.toLocaleString("id-ID"))}`,
+      ``,
+      `📋 *Data Akun:*\n\`\`\`\n${result.accountData}\n\`\`\``,
     );
+
+    await ctx.reply(lines.join("\n"), { parse_mode: "MarkdownV2" });
   });
 
   bot.command("saldo", async (ctx) => {
@@ -135,20 +138,33 @@ export async function startTelegramBot(botId: string) {
   });
 
   bot.command("help", async (ctx) => {
+    const contact = botConfig.contactPerson
+      ? `\n\n📞 Contact: ${botConfig.contactPerson}`
+      : "";
     await ctx.reply(
-      "📌 *Perintah Bot:*\n\n/start - Mulai\n/menu - Lihat produk\n/order [kode] [jumlah] - Order produk\n/saldo - Info saldo\n/help - Bantuan\n\n" +
-        (botConfig.contactPerson
-          ? `📞 Contact: ${botConfig.contactPerson}`
-          : ""),
-      { parse_mode: "Markdown" }
+      "📌 Perintah Bot:\n\n" +
+        "/start - Mulai\n" +
+        "/menu - Lihat produk\n" +
+        "/order [kode] [jumlah] [voucher] - Order produk\n" +
+        "/saldo - Info saldo\n" +
+        "/help - Bantuan" +
+        contact,
     );
   });
 
   bot.catch((err) => {
-    console.error(`Bot ${botId} error:`, err);
+    if (err instanceof GrammyError) {
+      console.error(`Bot ${botId} grammy error:`, err.description);
+    } else if (err instanceof HttpError) {
+      console.error(`Bot ${botId} network error:`, err.message);
+    } else {
+      console.error(`Bot ${botId} error:`, err);
+    }
   });
 
-  bot.start();
+  bot.start().catch((err) => {
+    console.error(`Bot ${botId} start error:`, err);
+  });
   activeBots.set(botId, bot);
 
   await prisma.bot.update({
@@ -162,7 +178,7 @@ export async function startTelegramBot(botId: string) {
 export async function stopTelegramBot(botId: string) {
   const bot = activeBots.get(botId);
   if (bot) {
-    await bot.stop();
+    await bot.stop().catch(() => {});
     activeBots.delete(botId);
   }
   await prisma.bot.update({
@@ -174,15 +190,17 @@ export async function stopTelegramBot(botId: string) {
 export async function sendTelegramBroadcast(
   botId: string,
   message: string,
-  targets: string[]
+  targets: string[],
 ) {
   const bot = activeBots.get(botId);
-  if (!bot) throw new Error("Bot not active");
+  if (!bot) throw new Error("Bot belum aktif. Start bot terlebih dahulu.");
 
   const results = [];
   for (const target of targets) {
     try {
-      await bot.api.sendMessage(target, message, { parse_mode: "Markdown" });
+      // Use plain text (no parse_mode) so user-supplied formatting characters
+      // don't break message delivery.
+      await bot.api.sendMessage(target, message);
       results.push({ target, success: true });
     } catch (err) {
       results.push({ target, success: false, error: String(err) });

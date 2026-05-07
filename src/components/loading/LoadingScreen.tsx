@@ -3,13 +3,24 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, useEffect } from "react";
 
+const SEEN_KEY = "reselakh:loading-seen";
+
+function shouldShowSplash(): boolean {
+  if (typeof window === "undefined") return false;
+  const seen = sessionStorage.getItem(SEEN_KEY);
+  if (seen) return false;
+  sessionStorage.setItem(SEEN_KEY, "1");
+  return true;
+}
+
 export default function LoadingScreen() {
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => shouldShowSplash());
 
   useEffect(() => {
+    if (!isLoading) return;
     const timer = setTimeout(() => setIsLoading(false), 2000);
     return () => clearTimeout(timer);
-  }, []);
+  }, [isLoading]);
 
   return (
     <AnimatePresence>
@@ -19,6 +30,9 @@ export default function LoadingScreen() {
           exit={{ opacity: 0 }}
           transition={{ duration: 0.5 }}
           className="fixed inset-0 z-[9999] flex items-center justify-center bg-gradient-to-br from-indigo-950 via-purple-950 to-slate-950"
+          role="status"
+          aria-live="polite"
+          aria-label="Memuat aplikasi Reselakh"
         >
           <div className="flex flex-col items-center gap-6">
             <motion.div
@@ -32,7 +46,7 @@ export default function LoadingScreen() {
                 transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
                 className="w-20 h-20 rounded-2xl bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-2xl shadow-purple-500/30"
               >
-                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M12 2L2 7l10 5 10-5-10-5z" />
                   <path d="M2 17l10 5 10-5" />
                   <path d="M2 12l10 5 10-5" />

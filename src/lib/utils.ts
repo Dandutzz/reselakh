@@ -20,16 +20,39 @@ export function generateSlug(text: string): string {
     .replace(/(^-|-$)/g, "");
 }
 
+/**
+ * Generate a slug, suffixing -2/-3/... until `isAvailable(slug)` returns true.
+ */
+export async function generateUniqueSlug(
+  text: string,
+  isAvailable: (slug: string) => Promise<boolean>,
+): Promise<string> {
+  const base = generateSlug(text) || "item";
+  if (await isAvailable(base)) return base;
+  for (let i = 2; i < 1000; i++) {
+    const candidate = `${base}-${i}`;
+    if (await isAvailable(candidate)) return candidate;
+  }
+  // Fallback: append timestamp
+  return `${base}-${Date.now()}`;
+}
+
 export function cn(...classes: (string | boolean | undefined | null)[]): string {
   return classes.filter(Boolean).join(" ");
 }
 
+/**
+ * Parse multi-line bulk account data in the form `email|password|info`.
+ * Lines that do not contain a `|` separator or have empty email are skipped
+ * (silently — caller should also count returned length).
+ */
 export function parseAccountData(
-  bulk: string
+  bulk: string,
 ): { email: string; password: string; info: string }[] {
   return bulk
     .split("\n")
-    .filter((line) => line.trim())
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && line.includes("|"))
     .map((line) => {
       const parts = line.split("|");
       return {
@@ -37,5 +60,14 @@ export function parseAccountData(
         password: parts[1]?.trim() || "",
         info: parts[2]?.trim() || "",
       };
-    });
+    })
+    .filter((acc) => acc.email.length > 0);
+}
+
+/**
+ * Escape user-supplied text for Telegram's MarkdownV2 parse mode.
+ * Required for any text containing characters in the reserved set.
+ */
+export function escapeMarkdownV2(text: string): string {
+  return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
 }

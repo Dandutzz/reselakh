@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
+import { handleApiError, requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 export async function GET() {
@@ -40,7 +40,7 @@ export async function GET() {
       recentOrders,
       recentMutations,
     });
-  } catch {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  } catch (err) {
+    return handleApiError("user/dashboard:GET", err);
   }
 }

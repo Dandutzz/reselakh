@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth";
+import { handleApiError, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(request: Request) {
@@ -8,7 +8,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const userId = searchParams.get("userId") || "";
 
-    const where: Record<string, unknown> = {};
+    const where: { userId?: string } = {};
     if (userId) where.userId = userId;
 
     const resellers = await prisma.reseller.findMany({
@@ -20,7 +20,7 @@ export async function GET(request: Request) {
       orderBy: { createdAt: "desc" },
     });
     return NextResponse.json({ resellers });
-  } catch {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  } catch (err) {
+    return handleApiError("admin/resellers:GET", err);
   }
 }

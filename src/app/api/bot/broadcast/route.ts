@@ -1,21 +1,27 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
+import { z } from "zod";
+import { handleApiError, requireAuth, ValidationError } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { idSchema, parseJson } from "@/lib/validate";
 import { sendTelegramBroadcast } from "@/lib/telegram";
 import { sendWhatsAppBroadcast } from "@/lib/whatsapp";
+
+const Schema = z.object({
+  botId: idSchema,
+  message: z.string().trim().min(1).max(4000),
+  targets: z.array(z.string().trim().min(1).max(80)).min(1).max(1000),
+});
 
 export async function POST(request: Request) {
   try {
     const session = await requireAuth();
-    const { botId, message, targets } = await request.json();
+    const { botId, message, targets } = await parseJson(request, Schema);
 
     const bot = await prisma.bot.findFirst({
       where: { id: botId, userId: session.id },
+      select: { id: true, type: true },
     });
-
-    if (!bot) {
-      return NextResponse.json({ error: "Bot not found" }, { status: 404 });
-    }
+    if (!bot) throw new ValidationError("Bot tidak ditemukan");
 
     const broadcast = await prisma.broadcast.create({
       data: {
@@ -40,6 +46,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, results });
   } catch (err) {
-    return NextResponse.json({ error: String(err) }, { status: 500 });
+    return handleApiError("bot/broadcast:POST", err);
   }
 }
