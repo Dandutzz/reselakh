@@ -5,6 +5,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Trash2, X, QrCode, Copy, Check } from "lucide-react";
 import Spinner from "@/components/loading/Spinner";
 
+type EqrisMethod = "gomerch" | "orkut";
+
 interface QrisData {
   id: string;
   name: string;
@@ -12,30 +14,56 @@ interface QrisData {
   apiKey: string | null;
   merchantId: string | null;
   isActive: boolean;
+  config: string | null;
   _count: { selections: number };
 }
 
-interface FormState {
+interface QrisFormState {
   name: string;
   provider: string;
+  // EQRIS-only sub-method (ignored for other providers).
+  eqrisMethod: EqrisMethod;
+  // EQRIS Bearer token / generic API key (for Pakasir this is the Project API Key).
   apiKey: string;
+  // EQRIS Orkut password / generic API secret (ignored for Pakasir).
   apiSecret: string;
+  // Provider-specific identifier:
+  //   - eqris/gomerch: GoPay Merchant ID
+  //   - eqris/orkut:   Orkut username (used for /api/mutasi-orkut-v2)
+  //   - pakasir:       Project Slug (used as `project` in transactioncreate/transactiondetail)
   merchantId: string;
+  // EQRIS Orkut-only: merchant's QRIS string base used by /api/qr-orkut.
+  qrisBase: string;
 }
 
-const EMPTY_FORM: FormState = {
+const EMPTY_FORM: QrisFormState = {
   name: "",
   provider: "eqris",
+  eqrisMethod: "gomerch",
   apiKey: "",
   apiSecret: "",
   merchantId: "",
+  qrisBase: "",
 };
+
+function readMethodFromConfig(config: string | null): EqrisMethod {
+  if (!config) return "gomerch";
+  try {
+    const parsed = JSON.parse(config);
+    if (parsed && typeof parsed === "object" && parsed.method === "orkut") {
+      return "orkut";
+    }
+  } catch {
+    // ignore
+  }
+  return "gomerch";
+}
 
 export default function AdminQrisPage() {
   const [servers, setServers] = useState<QrisData[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
-  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [form, setForm] = useState<QrisFormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -80,12 +108,37 @@ export default function AdminQrisPage() {
         return;
       }
     }
-    const payload = {
+    if (form.provider === "eqris") {
+      if (!form.apiKey.trim()) {
+        setError("EQRIS API Token wajib diisi");
+        return;
+      }
+      if (form.eqrisMethod === "orkut" && !form.qrisBase.trim()) {
+        setError("QRIS String Base wajib diisi untuk metode Orkut");
+        return;
+      }
+      if (form.eqrisMethod === "gomerch" && !form.merchantId.trim()) {
+        setError("Merchant ID wajib diisi untuk metode GoPay Merchant");
+        return;
+      }
+    }
+
+    // EQRIS sub-method + qrisBase live inside `config` JSON to avoid a schema
+    // migration. Other providers ignore those keys.
+    const config: Record<string, string> = {};
+    if (form.provider === "eqris") {
+      config.method = form.eqrisMethod;
+      if (form.eqrisMethod === "orkut" && form.qrisBase.trim()) {
+        config.qrisBase = form.qrisBase.trim();
+      }
+    }
+    const payload: Record<string, unknown> = {
       name: form.name.trim(),
       provider: form.provider,
       apiKey: form.apiKey.trim() || null,
       apiSecret: form.apiSecret.trim() || null,
       merchantId: form.merchantId.trim() || null,
+      config: Object.keys(config).length > 0 ? JSON.stringify(config) : null,
     };
     setSaving(true);
     const res = await fetch("/api/admin/qris", {
@@ -148,33 +201,38 @@ export default function AdminQrisPage() {
 
       {loading ? <Spinner /> : (
         <div className="grid gap-4">
-          {servers.map((s) => (
-            <motion.div key={s.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-100 dark:border-slate-800 p-5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 flex items-center justify-center">
-                    <QrCode className="w-6 h-6 text-white" />
+          {servers.map((s) => {
+            const eqrisMethod = s.provider === "eqris" ? readMethodFromConfig(s.config) : null;
+            const eqrisLabel = eqrisMethod === "orkut" ? "Orkut" : eqrisMethod === "gomerch" ? "GoPay Merchant" : null;
+            return (
+              <motion.div key={s.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-100 dark:border-slate-800 p-5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 flex items-center justify-center">
+                      <QrCode className="w-6 h-6 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold">{s.name}</h3>
+                      <p className="text-sm text-gray-500">
+                        Provider: <span className="uppercase font-medium">{s.provider}</span>
+                        {eqrisLabel && <> · Metode: <span className="font-medium">{eqrisLabel}</span></>}
+                        {s.provider === "pakasir" && s.merchantId && (
+                          <> · Slug: <span className="font-mono">{s.merchantId}</span></>
+                        )}
+                        {" "}| {s._count.selections} user memilih
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-semibold">{s.name}</h3>
-                    <p className="text-sm text-gray-500">
-                      Provider: <span className="uppercase font-medium">{s.provider}</span>
-                      {s.provider === "pakasir" && s.merchantId && (
-                        <> · Slug: <span className="font-mono">{s.merchantId}</span></>
-                      )}
-                      {" "}| {s._count.selections} user memilih
-                    </p>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => handleToggle(s.id, s.isActive)} className={`px-3 py-1.5 rounded-lg text-xs font-medium ${s.isActive ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
+                      {s.isActive ? "Aktif" : "Nonaktif"}
+                    </button>
+                    <button onClick={() => handleDelete(s.id)} className="p-1.5 rounded-lg hover:bg-red-50 text-red-600"><Trash2 className="w-4 h-4" /></button>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => handleToggle(s.id, s.isActive)} className={`px-3 py-1.5 rounded-lg text-xs font-medium ${s.isActive ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
-                    {s.isActive ? "Aktif" : "Nonaktif"}
-                  </button>
-                  <button onClick={() => handleDelete(s.id)} className="p-1.5 rounded-lg hover:bg-red-50 text-red-600"><Trash2 className="w-4 h-4" /></button>
-                </div>
-              </div>
-            </motion.div>
-          ))}
+              </motion.div>
+            );
+          })}
           {servers.length === 0 && <p className="text-center text-gray-400 py-8">Belum ada QRIS server</p>}
         </div>
       )}
@@ -190,7 +248,7 @@ export default function AdminQrisPage() {
               <div className="space-y-3">
                 <div>
                   <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">Nama Server</label>
-                  <input placeholder="contoh: Pakasir Toko Utama" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent" />
+                  <input placeholder="contoh: EQRIS Toko A / Pakasir Toko B" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent" />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">Provider</label>
@@ -201,7 +259,70 @@ export default function AdminQrisPage() {
                   </select>
                 </div>
 
-                {form.provider === "pakasir" ? (
+                {form.provider === "eqris" && (
+                  <>
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">Metode EQRIS</label>
+                      <select
+                        value={form.eqrisMethod}
+                        onChange={(e) => setForm({ ...form, eqrisMethod: e.target.value as EqrisMethod })}
+                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent"
+                      >
+                        <option value="gomerch">GoPay Merchant (dynamic, /api/gomerch-transaksi/qris)</option>
+                        <option value="orkut">Orkut (static QRIS, /api/qr-orkut)</option>
+                      </select>
+                      <p className="mt-1 text-xs text-gray-500">
+                        {form.eqrisMethod === "orkut"
+                          ? "Generate QR dari QRIS String Base + nominal. Cek mutasi via /api/mutasi-orkut-v2."
+                          : "Dynamic QRIS resmi GoPay Merchant. Pakai apiKey (Bearer) + Merchant ID."}
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">EQRIS API Token (Bearer)</label>
+                      <input placeholder="Token akun EQRIS Anda" value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent font-mono text-sm" />
+                    </div>
+
+                    {form.eqrisMethod === "orkut" ? (
+                      <>
+                        <div>
+                          <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">QRIS String Base</label>
+                          <textarea
+                            placeholder="00020101021226..."
+                            value={form.qrisBase}
+                            onChange={(e) => setForm({ ...form, qrisBase: e.target.value })}
+                            rows={4}
+                            className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent font-mono text-xs resize-none"
+                          />
+                          <p className="mt-1 text-xs text-gray-500">String QRIS statis dari merchant Anda — EQRIS akan menyisipkan nominal dan menghasilkan QR dinamis.</p>
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">Username Orkut</label>
+                          <input placeholder="username Orkut (untuk cek mutasi)" value={form.merchantId} onChange={(e) => setForm({ ...form, merchantId: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent" />
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">Password Orkut</label>
+                          <input type="password" placeholder="password Orkut" value={form.apiSecret} onChange={(e) => setForm({ ...form, apiSecret: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent" />
+                          <p className="mt-1 text-xs text-gray-500">Dipakai untuk <code>POST /api/mutasi-orkut-v2</code>. Boleh kosong jika cek status pakai webhook eksternal.</p>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div>
+                          <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">Merchant ID (GoPay Merchant)</label>
+                          <input placeholder="merchant_id" value={form.merchantId} onChange={(e) => setForm({ ...form, merchantId: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent font-mono text-sm" />
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">Callback Token (opsional)</label>
+                          <input placeholder="signature untuk x-callback-token" value={form.apiSecret} onChange={(e) => setForm({ ...form, apiSecret: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent font-mono text-sm" />
+                          <p className="mt-1 text-xs text-gray-500">Kalau diisi, webhook EQRIS wajib mengirim header <code>x-callback-token</code> yang sama.</p>
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+
+                {form.provider === "pakasir" && (
                   <>
                     <div>
                       <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">Slug Proyek</label>
@@ -232,7 +353,9 @@ export default function AdminQrisPage() {
                       <p className="mt-1 text-xs text-gray-500">Tempel URL ini ke kolom <span className="font-medium">Webhook URL</span> di form Edit Proyek Pakasir Anda.</p>
                     </div>
                   </>
-                ) : (
+                )}
+
+                {form.provider !== "eqris" && form.provider !== "pakasir" && (
                   <>
                     <div>
                       <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">API Key</label>
