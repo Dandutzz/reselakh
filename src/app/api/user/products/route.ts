@@ -75,12 +75,13 @@ export async function GET() {
     const soldByVariation = new Map(soldGroup.map((g) => [g.variationId, g._count.id]));
 
     const enriched = products.map((p) => {
-      const soldCount = p.variations.reduce(
-        (sum, v) => sum + (soldByVariation.get(v.id) ?? 0),
-        0,
-      );
-      const stockCount = p.variations.reduce((sum, v) => sum + v._count.stocks, 0);
-      return { ...p, soldCount, stockCount };
+      const variationsWithSold = p.variations.map((v) => ({
+        ...v,
+        soldCount: soldByVariation.get(v.id) ?? 0,
+      }));
+      const soldCount = variationsWithSold.reduce((sum, v) => sum + v.soldCount, 0);
+      const stockCount = variationsWithSold.reduce((sum, v) => sum + v._count.stocks, 0);
+      return { ...p, variations: variationsWithSold, soldCount, stockCount };
     });
 
     return NextResponse.json({ products: enriched });
