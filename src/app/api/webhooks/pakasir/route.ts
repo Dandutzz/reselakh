@@ -3,6 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { settlePaidPayment } from "@/lib/order";
 import { notifyCustomerByJid } from "@/lib/whatsapp";
 import { notifyTelegramChat } from "@/lib/telegram";
+import {
+  buildInvoiceId,
+  formatSuccessCard,
+} from "@/lib/format/success-card";
 
 /**
  * Pakasir callback webhook. According to https://pakasir.com/p/docs Pakasir
@@ -50,12 +54,32 @@ export async function POST(request: Request) {
         where: { id: payment.botId },
         select: { type: true },
       });
-      const message =
-        result.kind === "topup"
-          ? `✅ Topup berhasil. Saldo Anda sekarang: Rp ${result.balanceAfter.toLocaleString("id-ID")}`
-          : result.kind === "buynow"
-            ? `✅ Pembayaran lunas.\n\nProduk: ${result.productName} - ${result.variationName}\nOrder ID: ${payment.orderId}\n\n📋 Data Akun:\n${result.accountData}`
-            : "";
+      let message = "";
+      if (result.kind === "topup") {
+        message = `✅ Topup berhasil. Saldo Anda sekarang: Rp ${result.balanceAfter.toLocaleString("id-ID")}`;
+      } else if (result.kind === "buynow") {
+        const buyerNumber = await prisma.customer.count({
+          where: {
+            ownerUserId: payment.ownerUserId,
+            createdAt: { lte: payment.customer.createdAt },
+          },
+        });
+        message = formatSuccessCard({
+          invoiceId: buildInvoiceId(payment.orderId, "AKH"),
+          buyerNumber,
+          telegramId: payment.customer.chatId ?? null,
+          whatsappPhone: payment.customer.phone ?? payment.customer.jid ?? null,
+          email: payment.customer.email ?? null,
+          productName: result.productName,
+          variationName: result.variationName,
+          quantity: payment.qty ?? 1,
+          amount: payment.amount,
+          fee: payment.fee,
+          total: payment.totalAmount,
+          method: "QRIS",
+          accountData: result.accountData,
+        });
+      }
       if (message && bot) {
         if (bot.type === "whatsapp" && payment.customer.jid) {
           await notifyCustomerByJid(payment.botId, payment.customer.jid, message);

@@ -9,12 +9,16 @@ const CreateSchema = z.object({
   jid: z.string().trim().max(120).optional().nullable(),
   chatId: z.string().trim().max(120).optional().nullable(),
   name: z.string().trim().max(120).optional().nullable(),
+  phone: z.string().trim().max(40).optional().nullable(),
+  email: z.string().trim().max(160).optional().nullable(),
   initialBalance: z.number().int().min(0).max(1_000_000_000).optional(),
 });
 
 const UpdateSchema = z.object({
   id: idSchema,
   name: z.string().trim().max(120).optional().nullable(),
+  phone: z.string().trim().max(40).optional().nullable(),
+  email: z.string().trim().max(160).optional().nullable(),
   status: z.enum(["active", "blocked"]).optional(),
   balanceAdjustment: z.number().int().optional(),
   adjustmentNote: z.string().trim().max(200).optional(),
@@ -84,6 +88,8 @@ export async function POST(request: Request) {
         jid: data.jid || null,
         chatId: data.chatId || null,
         name: data.name || null,
+        phone: data.phone || null,
+        email: data.email || null,
         balance: data.initialBalance ?? 0,
       },
     });
@@ -118,8 +124,15 @@ export async function PATCH(request: Request) {
     if (!owned) throw new ValidationError("Customer tidak ditemukan");
 
     const updated = await prisma.$transaction(async (tx) => {
-      const updates: { name?: string | null; status?: string } = {};
+      const updates: {
+        name?: string | null;
+        phone?: string | null;
+        email?: string | null;
+        status?: string;
+      } = {};
       if (data.name !== undefined) updates.name = data.name || null;
+      if (data.phone !== undefined) updates.phone = data.phone || null;
+      if (data.email !== undefined) updates.email = data.email || null;
       if (data.status !== undefined) updates.status = data.status;
 
       const adj = data.balanceAdjustment ?? 0;

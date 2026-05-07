@@ -8,6 +8,10 @@ import {
 import { prisma } from "./prisma";
 import { placeBotOrder } from "./order";
 import { createQris, generateOrderId } from "./payments";
+import {
+  buildInvoiceId,
+  formatSuccessCard,
+} from "./format/success-card";
 
 const activeBots = new Map<string, GrammyBot>();
 
@@ -476,30 +480,38 @@ async function executeBuyWithBalance(
     paymentMode: "balance",
   });
   if (!result.ok) return `❌ ${result.error}`;
-  const fresh = await prisma.customer.findUnique({
-    where: { id: customer.id },
-    select: { balance: true },
+  const [fresh, fullCustomer] = await Promise.all([
+    prisma.customer.findUnique({
+      where: { id: customer.id },
+      select: { balance: true },
+    }),
+    prisma.customer.findUnique({
+      where: { id: customer.id },
+      select: { id: true, createdAt: true, email: true, phone: true, chatId: true },
+    }),
+  ]);
+  const buyerNumber = fullCustomer
+    ? await prisma.customer.count({
+        where: { ownerUserId, createdAt: { lte: fullCustomer.createdAt } },
+      })
+    : 1;
+  const card = formatSuccessCard({
+    invoiceId: buildInvoiceId(result.orderId, "AKH"),
+    buyerNumber,
+    telegramId: fullCustomer?.chatId ?? null,
+    whatsappPhone: fullCustomer?.phone ?? null,
+    email: fullCustomer?.email ?? null,
+    productName: result.productName,
+    variationName: result.variationName,
+    quantity: qty,
+    amount: result.subtotal,
+    fee: 0,
+    total: result.totalPrice,
+    method: "Saldo",
+    accountData: result.accountData,
   });
-  const lines = [
-    "✅ Pembelian Berhasil (saldo)",
-    "",
-    `Produk: ${result.productName}`,
-    `Variasi: ${result.variationName}`,
-    `Jumlah: ${qty}`,
-    `Subtotal: ${rupiah(result.subtotal)}`,
-  ];
-  if (result.discount > 0) {
-    lines.push(
-      `Voucher (${result.voucherCode || ""}): -${rupiah(result.discount)}`,
-    );
-  }
-  lines.push(
-    `Total: ${rupiah(result.totalPrice)}`,
-    `Sisa Saldo: ${rupiah(fresh?.balance ?? 0)}`,
-    "",
-    `📋 Data Akun:\n${result.accountData}`,
-  );
-  return lines.join("\n");
+  const trailer = `\n\nSisa Saldo: Rp ${rupiah(fresh?.balance ?? 0)}`;
+  return card + trailer;
 }
 
 async function executeBuyNow(
