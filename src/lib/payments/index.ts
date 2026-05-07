@@ -42,7 +42,7 @@ export async function checkStatus(
   amount: number,
 ): Promise<CheckStatusResult | CheckStatusError> {
   const provider = normaliseProvider(server.provider);
-  if (provider === "eqris") return eqris.checkStatus(server, orderId);
+  if (provider === "eqris") return eqris.checkStatus(server, orderId, amount);
   if (provider === "pakasir") return pakasir.checkStatus(server, orderId, amount);
   return {
     ok: false,
