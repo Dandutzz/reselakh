@@ -9,6 +9,7 @@ const PostSchema = z.union([
   z.object({
     variationId: idSchema,
     bulk: z.string().min(1).max(200_000),
+    replaceAll: z.boolean().optional(),
   }),
   z.object({
     variationId: idSchema,
@@ -71,12 +72,20 @@ export async function POST(request: Request) {
       if (accounts.length === 0) {
         throw new ValidationError("Data bulk kosong atau tidak valid");
       }
-      const stocks = await prisma.stock.createMany({
-        data: accounts.map((acc) => ({
-          variationId: body.variationId,
-          data: `${acc.email}|${acc.password}|${acc.info}`,
-        })),
-      });
+      const inserts = accounts.map((acc) => ({
+        variationId: body.variationId,
+        data: `${acc.email}|${acc.password}|${acc.info}`,
+      }));
+      if (body.replaceAll) {
+        const result = await prisma.$transaction(async (tx) => {
+          await tx.stock.deleteMany({
+            where: { variationId: body.variationId, isSold: false },
+          });
+          return tx.stock.createMany({ data: inserts });
+        });
+        return NextResponse.json({ success: true, count: result.count, replaced: true });
+      }
+      const stocks = await prisma.stock.createMany({ data: inserts });
       return NextResponse.json({ success: true, count: stocks.count });
     }
 

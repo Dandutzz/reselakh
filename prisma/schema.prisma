@@ -144,6 +144,16 @@ model Product {
   image       String?
   banner      String?
   isActive    Boolean  @default(true)
+  // JSON blob with optional Quick Tools fields:
+  // {
+  //   terms?: string,
+  //   cashbackType?: "nominal" | "percent",
+  //   cashbackValue?: number,
+  //   profit?: number,
+  //   modeBulking?: number,   // 0 = non-bulk
+  //   stockFormat?: string,   // hint for stock data format e.g. "email|password"
+  // }
+  config      String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

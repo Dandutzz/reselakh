@@ -12,6 +12,19 @@ const codeSchema = z
   .max(50, "Kode produk terlalu panjang")
   .regex(/^[A-Za-z0-9_-]+$/, "Kode produk hanya boleh huruf/angka/tanda - dan _");
 
+const configSchema = z
+  .object({
+    terms: z.string().max(2000).optional(),
+    cashbackType: z.enum(["nominal", "percent"]).optional(),
+    cashbackValue: z.number().finite().min(0).max(100_000_000).optional(),
+    profit: z.number().finite().min(0).max(100_000_000).optional(),
+    modeBulking: z.number().int().min(0).max(10_000).optional(),
+    stockFormat: z.string().max(120).optional(),
+  })
+  .strict()
+  .optional()
+  .nullable();
+
 const CreateSchema = z.object({
   categoryId: idSchema,
   name: z.string().trim().min(1).max(120),
@@ -20,6 +33,7 @@ const CreateSchema = z.object({
   price: moneySchema,
   image: z.string().url().max(500).optional().nullable(),
   banner: z.string().url().max(500).optional().nullable(),
+  config: configSchema,
 });
 
 const UpdateSchema = z.object({
@@ -32,6 +46,7 @@ const UpdateSchema = z.object({
   image: z.string().url().max(500).optional().nullable(),
   banner: z.string().url().max(500).optional().nullable(),
   isActive: z.boolean().optional(),
+  config: configSchema,
 });
 
 const DeleteSchema = z.object({ id: idSchema });
@@ -47,7 +62,28 @@ export async function GET() {
       },
       orderBy: { createdAt: "desc" },
     });
-    return NextResponse.json({ products });
+
+    const variationIds = products.flatMap((p) => p.variations.map((v) => v.id));
+    const soldGroup =
+      variationIds.length === 0
+        ? []
+        : await prisma.stock.groupBy({
+            by: ["variationId"],
+            where: { variationId: { in: variationIds }, isSold: true },
+            _count: { id: true },
+          });
+    const soldByVariation = new Map(soldGroup.map((g) => [g.variationId, g._count.id]));
+
+    const enriched = products.map((p) => {
+      const soldCount = p.variations.reduce(
+        (sum, v) => sum + (soldByVariation.get(v.id) ?? 0),
+        0,
+      );
+      const stockCount = p.variations.reduce((sum, v) => sum + v._count.stocks, 0);
+      return { ...p, soldCount, stockCount };
+    });
+
+    return NextResponse.json({ products: enriched });
   } catch (err) {
     return handleApiError("user/products:GET", err);
   }
@@ -84,6 +120,7 @@ export async function POST(request: Request) {
           price: data.price,
           image: data.image ?? null,
           banner: data.banner ?? null,
+          config: data.config ? JSON.stringify(data.config) : null,
         },
       });
       return NextResponse.json({ success: true, product });
@@ -119,7 +156,8 @@ export async function PATCH(request: Request) {
       if (!category) throw new ValidationError("Kategori tidak ditemukan");
     }
 
-    const data: Record<string, unknown> = { ...rest };
+    const { config: configIn, ...restNoConfig } = rest;
+    const data: Record<string, unknown> = { ...restNoConfig };
     if (rest.name) {
       data.slug = await generateUniqueSlug(rest.name, async (s) => {
         const existing = await prisma.product.findFirst({
@@ -131,6 +169,9 @@ export async function PATCH(request: Request) {
     }
     if (rest.code) {
       data.code = rest.code.toUpperCase();
+    }
+    if (configIn !== undefined) {
+      data.config = configIn ? JSON.stringify(configIn) : null;
     }
 
     try {
