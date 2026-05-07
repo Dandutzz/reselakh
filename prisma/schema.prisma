@@ -318,6 +318,7 @@ model Customer {
   chatId      String? // Telegram chat id as string
   name        String?
   phone       String?
+  email       String?
   balance     Float    @default(0)
   status      String   @default("active") // active | banned
   createdAt   DateTime @default(now())

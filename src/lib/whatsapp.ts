@@ -8,6 +8,11 @@ import path from "path";
 import fs from "fs";
 import { placeBotOrder } from "./order";
 import { createQris, generateOrderId } from "./payments";
+import {
+  buildInvoiceId,
+  formatSuccessCard,
+  rupiah,
+} from "./format/success-card";
 
 const activeSockets = new Map<string, WASocket>();
 const pairingCodes = new Map<string, string>();
@@ -152,6 +157,119 @@ export async function startWhatsAppBot(botId: string): Promise<string | null> {
   }
 
   return null;
+}
+
+/**
+ * Pull a `+62…` style phone number out of a WhatsApp JID. WA JIDs are
+ * typically `628123…@s.whatsapp.net` or the privacy-mode variant `…@lid`
+ * (which has no number to extract). Returns null when no digits can be
+ * recovered.
+ */
+function phoneFromJid(jid: string | null | undefined): string | null {
+  if (!jid) return null;
+  const m = jid.match(/^(\d+)@/);
+  if (!m) return null;
+  const digits = m[1] ?? "";
+  return digits ? `+${digits}` : null;
+}
+
+/**
+ * Render the `#stock` reply: a BOT AUTO ORDER header followed by one
+ * formatted card per active product listing each variation's code, stock,
+ * price, and description. Top-3 products by sold count get the BEST SELLER
+ * marker. Output is plain text with WhatsApp `*…*` bold markers.
+ */
+async function formatStockListWA(
+  ownerUserId: string,
+  contactPerson: string | null,
+): Promise<string> {
+  const products = await prisma.product.findMany({
+    where: { userId: ownerUserId, isActive: true },
+    include: {
+      variations: {
+        where: { isActive: true },
+        include: {
+          _count: { select: { stocks: { where: { isSold: false } } } },
+        },
+        orderBy: { price: "asc" },
+      },
+    },
+    orderBy: { name: "asc" },
+  });
+
+  if (products.length === 0) {
+    return "Belum ada produk tersedia.";
+  }
+
+  // Determine BEST SELLER (top 3 by sold-stock count) per owner.
+  const soldCounts = await prisma.stock.groupBy({
+    by: ["variationId"],
+    where: {
+      isSold: true,
+      variation: { product: { userId: ownerUserId } },
+    },
+    _count: { _all: true },
+  });
+  const variationToProduct = new Map<string, string>();
+  for (const p of products) {
+    for (const v of p.variations) variationToProduct.set(v.id, p.id);
+  }
+  const productSold = new Map<string, number>();
+  for (const row of soldCounts) {
+    const pid = row.variationId
+      ? variationToProduct.get(row.variationId)
+      : undefined;
+    if (!pid) continue;
+    productSold.set(pid, (productSold.get(pid) ?? 0) + row._count._all);
+  }
+  const topProductIds = new Set(
+    [...productSold.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .filter(([, c]) => c > 0)
+      .map(([pid]) => pid),
+  );
+
+  const sections: string[] = [];
+  sections.push(
+    [
+      "*╭────〔 BOT AUTO ORDER 〕─*",
+      "*┊・* Untuk membeli Ketik Perintah Berikut",
+      "*┊・* #buynow Kode(spasi)JumlahAkun",
+      "*┊・* Ex: #buynow spo3b 1",
+      "*┊・*",
+      "*┊・* Pastikan Code & Jumlah Akun di Ketik dengan benar",
+      contactPerson
+        ? `*┊・* Contact Admin: ${contactPerson}`
+        : "*┊・* Contact Admin: -",
+      "*╰┈┈┈┈┈┈┈┈*",
+    ].join("\n"),
+  );
+
+  for (const p of products) {
+    const sold = productSold.get(p.id) ?? 0;
+    const isBest = topProductIds.has(p.id);
+    const header = isBest
+      ? `*╭────〔 ${p.name} \`BEST SELLER\`🔥 〕─*`
+      : `*╭────〔 ${p.name} 〕─*`;
+    const lines: string[] = [header, `*┊・Stok Terjual:* ${sold}`];
+    if (p.variations.length === 0) {
+      lines.push("*┊*____________________");
+      lines.push("*┊・* Belum ada variasi tersedia.");
+    } else {
+      for (const v of p.variations) {
+        lines.push("*┊*____________________");
+        lines.push(`*┊・Variasi:* ${v.name}`);
+        lines.push(`*┊・Kode:* ${v.code}`);
+        lines.push(`*┊・Stok Tersedia:* ${v._count.stocks}`);
+        lines.push(`*┊・Harga:* Rp. ${rupiah(v.price)}`);
+        lines.push(`*┊・Desc:* ${p.description ?? "-"}`);
+      }
+    }
+    lines.push("*┊*____________________");
+    sections.push(lines.join("\n"));
+  }
+  return sections.join("\n\n");
 }
 
 function parseJidList(raw: string | null | undefined): Set<string> {
@@ -303,8 +421,38 @@ async function handleWhatsAppMessage(
     return;
   }
 
-  // Customer-facing commands operate on private chats only.
-  if (isGroup) return;
+  // #stock works everywhere — both groups and private chats.
+  if (
+    cmd === "#stock" ||
+    cmd === "/stock" ||
+    cmd === "stock"
+  ) {
+    const reply = await formatStockListWA(
+      botConfig.userId,
+      botConfig.contactPerson,
+    );
+    await sock.sendMessage(from, { text: reply });
+    return;
+  }
+
+  // Customer-facing commands below this line are private-chat only.
+  if (isGroup) {
+    // For #buynow / #buy in group, redirect the buyer to a private chat so
+    // we never expose account data to the rest of the group.
+    if (
+      cmd.startsWith("#buynow") ||
+      cmd.startsWith("#buy") ||
+      cmd.startsWith("/buy") ||
+      cmd.startsWith("/buynow") ||
+      cmd.startsWith("#topup") ||
+      cmd.startsWith("/topup")
+    ) {
+      await sock.sendMessage(from, {
+        text: "Untuk pembelian / topup, silakan kirim pesan ke private chat saya.",
+      });
+    }
+    return;
+  }
 
   const customer = await getOrCreateCustomer(botConfig.userId, botId, sender);
   if (customer.status !== "active") {
@@ -314,7 +462,13 @@ async function handleWhatsAppMessage(
     return;
   }
 
-  if (cmd === "/start" || cmd === "halo" || cmd === "hi" || cmd === "hello") {
+  if (
+    cmd === "/start" ||
+    cmd === "#start" ||
+    cmd === "halo" ||
+    cmd === "hi" ||
+    cmd === "hello"
+  ) {
     const welcome =
       botConfig.welcomeMsg ||
       `Selamat datang di ${botConfig.name}!\n\nKetik *menu* untuk lihat produk\n*/saldo* untuk cek saldo\n*/buy KODE [QTY]* untuk beli pakai saldo\n*/buynow KODE [QTY]* untuk beli langsung pakai QRIS`;
@@ -322,7 +476,7 @@ async function handleWhatsAppMessage(
     return;
   }
 
-  if (cmd === "menu" || cmd === "/menu") {
+  if (cmd === "menu" || cmd === "/menu" || cmd === "#menu") {
     const categories = await prisma.category.findMany({
       where: { userId: botConfig.userId, isActive: true },
       include: {
@@ -370,7 +524,7 @@ async function handleWhatsAppMessage(
     return;
   }
 
-  if (cmd === "/saldo" || cmd === "saldo") {
+  if (cmd === "/saldo" || cmd === "saldo" || cmd === "#saldo") {
     const fresh = await prisma.customer.findUnique({
       where: { id: customer.id },
       select: { balance: true },
@@ -439,7 +593,11 @@ async function handleWhatsAppMessage(
   }
 
   // /buy KODE [QTY] [VOUCHER] — pay from Customer balance.
-  if (cmd.startsWith("/buy ") || cmd.startsWith("buy ")) {
+  if (
+    cmd.startsWith("/buy ") ||
+    cmd.startsWith("#buy ") ||
+    cmd.startsWith("buy ")
+  ) {
     if (!botConfig.isAutoOrder) {
       await sock.sendMessage(from, {
         text: "Auto order tidak aktif. Hubungi admin.",
@@ -470,35 +628,58 @@ async function handleWhatsAppMessage(
       await sock.sendMessage(from, { text: `❌ ${result.error}` });
       return;
     }
-    const fresh = await prisma.customer.findUnique({
-      where: { id: customer.id },
-      select: { balance: true },
+    const [fresh, fullCustomer] = await Promise.all([
+      prisma.customer.findUnique({
+        where: { id: customer.id },
+        select: { balance: true },
+      }),
+      prisma.customer.findUnique({
+        where: { id: customer.id },
+        select: {
+          id: true,
+          createdAt: true,
+          email: true,
+          phone: true,
+          jid: true,
+          chatId: true,
+        },
+      }),
+    ]);
+    const buyerNumber = fullCustomer
+      ? await prisma.customer.count({
+          where: {
+            ownerUserId: botConfig.userId,
+            createdAt: { lte: fullCustomer.createdAt },
+          },
+        })
+      : 1;
+    const card = formatSuccessCard({
+      invoiceId: buildInvoiceId(result.orderId, "AKH"),
+      buyerNumber,
+      telegramId: fullCustomer?.chatId ?? null,
+      whatsappPhone:
+        fullCustomer?.phone ?? phoneFromJid(fullCustomer?.jid ?? null),
+      email: fullCustomer?.email ?? null,
+      productName: result.productName,
+      variationName: result.variationName,
+      quantity: qty,
+      amount: result.subtotal,
+      fee: 0,
+      total: result.totalPrice,
+      method: "Saldo",
+      accountData: result.accountData,
     });
-    const lines = [
-      `✅ *Pembelian Berhasil (saldo)*`,
-      ``,
-      `Produk: ${result.productName}`,
-      `Variasi: ${result.variationName}`,
-      `Jumlah: ${qty}`,
-      `Subtotal: Rp ${result.subtotal.toLocaleString("id-ID")}`,
-    ];
-    if (result.discount > 0) {
-      lines.push(
-        `Voucher (${result.voucherCode || ""}): -Rp ${result.discount.toLocaleString("id-ID")}`,
-      );
-    }
-    lines.push(
-      `Total: Rp ${result.totalPrice.toLocaleString("id-ID")}`,
-      `Sisa Saldo: Rp ${(fresh?.balance ?? 0).toLocaleString("id-ID")}`,
-      ``,
-      `📋 *Data Akun:*\n${result.accountData}`,
-    );
-    await sock.sendMessage(from, { text: lines.join("\n") });
+    const trailer = `\n\nSisa Saldo: Rp ${rupiah(fresh?.balance ?? 0)}`;
+    await sock.sendMessage(from, { text: card + trailer });
     return;
   }
 
   // /buynow KODE [QTY] — generate a QRIS via the configured gateway.
-  if (cmd.startsWith("/buynow ") || cmd.startsWith("buynow ")) {
+  if (
+    cmd.startsWith("/buynow ") ||
+    cmd.startsWith("#buynow ") ||
+    cmd.startsWith("buynow ")
+  ) {
     if (!botConfig.isAutoOrder) {
       await sock.sendMessage(from, {
         text: "Auto order tidak aktif. Hubungi admin.",
@@ -607,7 +788,11 @@ async function handleWhatsAppMessage(
   }
 
   // /topup NOMINAL — generate a QRIS for crediting customer balance.
-  if (cmd.startsWith("/topup") || cmd.startsWith("topup")) {
+  if (
+    cmd.startsWith("/topup") ||
+    cmd.startsWith("#topup") ||
+    cmd.startsWith("topup")
+  ) {
     if (!botConfig.qrisServerId) {
       await sock.sendMessage(from, {
         text: "QRIS belum diatur untuk bot ini. Hubungi admin.",
@@ -677,7 +862,7 @@ async function handleWhatsAppMessage(
     return;
   }
 
-  if (cmd === "help" || cmd === "/help") {
+  if (cmd === "help" || cmd === "/help" || cmd === "#help") {
     const contact = botConfig.contactPerson
       ? `\n\n📞 Contact: ${botConfig.contactPerson}`
       : "";

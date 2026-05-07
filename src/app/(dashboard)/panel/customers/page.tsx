@@ -12,6 +12,8 @@ interface CustomerData {
   jid: string | null;
   chatId: string | null;
   name: string | null;
+  phone: string | null;
+  email: string | null;
   balance: number;
   status: string;
   createdAt: string;
@@ -29,12 +31,16 @@ interface CreateForm {
   jid: string;
   chatId: string;
   name: string;
+  phone: string;
+  email: string;
   initialBalance: string;
 }
 
 interface AdjustForm {
   id: string;
   name: string;
+  phone: string;
+  email: string;
   status: string;
   balanceAdjustment: string;
   adjustmentNote: string;
@@ -45,6 +51,8 @@ const emptyCreate = (): CreateForm => ({
   jid: "",
   chatId: "",
   name: "",
+  phone: "",
+  email: "",
   initialBalance: "0",
 });
 
@@ -93,6 +101,8 @@ export default function CustomersPage() {
     setEditForm({
       id: c.id,
       name: c.name || "",
+      phone: c.phone || "",
+      email: c.email || "",
       status: c.status,
       balanceAdjustment: "",
       adjustmentNote: "",
@@ -116,6 +126,8 @@ export default function CustomersPage() {
       jid: createForm.jid || null,
       chatId: createForm.chatId || null,
       name: createForm.name || null,
+      phone: createForm.phone || null,
+      email: createForm.email || null,
       initialBalance: parseInt(createForm.initialBalance || "0") || 0,
     };
     const res = await fetch("/api/user/customers", {
@@ -139,6 +151,8 @@ export default function CustomersPage() {
     const payload: Record<string, unknown> = {
       id: editForm.id,
       name: editForm.name || null,
+      phone: editForm.phone || null,
+      email: editForm.email || null,
       status: editForm.status,
     };
     if (adj && !Number.isNaN(parseInt(adj))) {
@@ -230,6 +244,7 @@ export default function CustomersPage() {
                   <th className="text-left px-4 py-3 font-medium">
                     JID / Chat ID
                   </th>
+                  <th className="text-left px-4 py-3 font-medium">Kontak</th>
                   <th className="text-right px-4 py-3 font-medium">Saldo</th>
                   <th className="text-left px-4 py-3 font-medium">Status</th>
                   <th className="text-left px-4 py-3 font-medium">Dibuat</th>
@@ -256,6 +271,21 @@ export default function CustomersPage() {
                     </td>
                     <td className="px-4 py-3 text-xs font-mono">
                       {c.jid || c.chatId || "-"}
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      <div className="space-y-0.5">
+                        {c.email && (
+                          <div className="text-gray-700 dark:text-gray-300">
+                            {c.email}
+                          </div>
+                        )}
+                        {c.phone && (
+                          <div className="text-gray-500 font-mono">
+                            {c.phone}
+                          </div>
+                        )}
+                        {!c.email && !c.phone && "-"}
+                      </div>
                     </td>
                     <td className="px-4 py-3 font-bold text-right">
                       {formatCurrency(c.balance)}
@@ -370,6 +400,23 @@ export default function CustomersPage() {
                   className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent"
                 />
                 <input
+                  placeholder="Email (opsional)"
+                  type="email"
+                  value={createForm.email}
+                  onChange={(e) =>
+                    setCreateForm({ ...createForm, email: e.target.value })
+                  }
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent text-sm"
+                />
+                <input
+                  placeholder="No. HP (opsional)"
+                  value={createForm.phone}
+                  onChange={(e) =>
+                    setCreateForm({ ...createForm, phone: e.target.value })
+                  }
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent text-sm font-mono"
+                />
+                <input
                   placeholder="JID WhatsApp (628xxx@s.whatsapp.net)"
                   value={createForm.jid}
                   onChange={(e) =>
@@ -444,6 +491,23 @@ export default function CustomersPage() {
                     setEditForm({ ...editForm, name: e.target.value })
                   }
                   className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent"
+                />
+                <input
+                  placeholder="Email"
+                  type="email"
+                  value={editForm.email}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, email: e.target.value })
+                  }
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent text-sm"
+                />
+                <input
+                  placeholder="No. HP"
+                  value={editForm.phone}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, phone: e.target.value })
+                  }
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent text-sm font-mono"
                 />
                 <select
                   value={editForm.status}
