@@ -1,16 +1,17 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
+import { handleApiError, requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { clampInt } from "@/lib/validate";
 
 export async function GET(request: Request) {
   try {
     const session = await requireAuth();
     const { searchParams } = new URL(request.url);
     const type = searchParams.get("type") || "";
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "50");
+    const page = clampInt(searchParams.get("page"), 1, 1, 10_000);
+    const limit = clampInt(searchParams.get("limit"), 50, 1, 200);
 
-    const where: Record<string, unknown> = { userId: session.id };
+    const where: { userId: string; type?: string } = { userId: session.id };
     if (type) where.type = type;
 
     const [mutations, total] = await Promise.all([
@@ -23,8 +24,13 @@ export async function GET(request: Request) {
       prisma.mutation.count({ where }),
     ]);
 
-    return NextResponse.json({ mutations, total, page, totalPages: Math.ceil(total / limit) });
-  } catch {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json({
+      mutations,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+    });
+  } catch (err) {
+    return handleApiError("user/mutations:GET", err);
   }
 }

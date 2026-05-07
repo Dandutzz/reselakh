@@ -1,36 +1,109 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Reselakh
 
-## Getting Started
+Platform sewa bot auto order Telegram & WhatsApp untuk produk digital. Dibangun
+dengan Next.js 16 (App Router + Turbopack), Prisma 7 + SQLite, dan auth JWT
+custom.
 
-First, run the development server:
+## Fitur
+
+- Multi-tenant: setiap user punya kategori, produk, variasi, stock, dan bot
+  sendiri.
+- Auto-order via Telegram (Grammy) dan WhatsApp (Baileys) — stock diklaim
+  secara atomik di dalam transaksi sehingga tidak bisa terjual ganda.
+- Saldo, mutasi, withdraw, voucher.
+- Panel admin: kelola user, voucher, withdrawal, QRIS, mutasi, dan resellers.
+
+## Persyaratan
+
+- Node.js ≥ 20.9.0 (Next.js 16 minimum)
+- npm 10+ (atau pnpm/yarn yang setara)
+
+## Setup
 
 ```bash
+# 1. Install dependencies
+npm install
+
+# 2. Copy environment template & isi NEXTAUTH_SECRET dengan string acak panjang
+cp .env.example .env
+# Edit .env — minimal NEXTAUTH_SECRET wajib di-set, kalau tidak server tidak mau start.
+
+# 3. Migrasi & seed database
+npx prisma migrate dev
+npx prisma db seed   # opsional: bikin admin/demo user
+
+# 4. Jalankan dev server
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Buka <http://localhost:3000>.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Default seed credentials (HANYA UNTUK DEV)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Seed script membuat dua akun:
 
-## Learn More
+| Username | Email                | Password   | Role  |
+| -------- | -------------------- | ---------- | ----- |
+| `admin`  | `admin@reselakh.com` | `admin123` | admin |
+| `demo`   | `demo@reselakh.com`  | `demo123`  | user  |
 
-To learn more about Next.js, take a look at the following resources:
+> **Wajib ganti password admin sebelum deploy ke production.** Seed credentials
+> di atas dimaksudkan hanya untuk pengujian lokal. Dipisahkan ke akun terpisah
+> dan dengan password kuat di production.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Environment variables
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Variable               | Wajib | Keterangan                                                         |
+| ---------------------- | ----- | ------------------------------------------------------------------ |
+| `DATABASE_URL`         | ya    | URL Prisma datasource. Default `file:./dev.db` (SQLite).            |
+| `NEXTAUTH_SECRET`      | ya    | Secret untuk signing JWT. Server tidak mau start kalau kosong.     |
+| `NEXT_PUBLIC_SITE_URL` | tidak | URL canonical untuk metadata SEO/OpenGraph. Opsional di dev.        |
 
-## Deploy on Vercel
+## Skrip
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+npm run dev        # dev server (Turbopack)
+npm run build      # production build
+npm run start      # start hasil build
+npm run lint       # ESLint
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Skema arsitektur
+
+- **Auth** — `src/lib/auth.ts`: bcrypt + JWT dengan TTL 1 hari, tersimpan di
+  cookie `auth-token` (`httpOnly`, `secure` di production, `sameSite=lax`).
+- **Validasi input** — `src/lib/validate.ts`: helper `parseJson(request, schema)`
+  yang lempar `ValidationError` (HTTP 400) bila body tidak match Zod schema.
+- **Rate limit** — `src/lib/rateLimit.ts`: token bucket in-memory, dipakai pada
+  `/api/auth/login`, `/api/auth/register`, dan `/api/user/vouchers`. **Catatan:**
+  in-memory state tidak survive di environment multi-instance/serverless;
+  ganti ke Redis (e.g. `@upstash/ratelimit`) untuk production scale.
+- **Bot order pipeline** — `src/lib/order.ts`: `placeBotOrder()` mengklaim
+  stock secara atomik via `updateMany(... isSold: false)` di dalam transaksi.
+- **Proxy/middleware** — `src/proxy.ts`: optimistic auth gate untuk path
+  `/panel/*` dan `/admin/*`. Authorization yang sebenarnya tetap dilakukan
+  di tiap route handler (`requireAuth`/`requireAdmin`).
+- **Cross-tenant safety** — semua endpoint `/api/user/*` memvalidasi
+  ownership melalui Prisma relation filter (`where: { id, product: { userId } }`),
+  sehingga user A tidak bisa membaca/mengubah resource user B.
+
+## Catatan deployment
+
+- Bot Telegram & WhatsApp dijalankan dalam-process; jangan deploy ke
+  serverless. Pakai container/VM yang stateful (Fly.io, Railway, VPS, dsb).
+  Kalau memang harus serverless, refactor agar bot worker terpisah.
+- Stock berisi data akun dalam **plaintext**. Pertimbangkan enkripsi di
+  layer aplikasi (AES-GCM) sebelum disimpan, dengan key dari KMS/secret store.
+- SQLite oke untuk dev — untuk production, ganti ke Postgres dan jalankan
+  `prisma migrate deploy`.
+
+## Status keamanan known issues
+
+Lihat history PR untuk daftar perbaikan terbaru. Item yang masih open / butuh
+follow-up:
+
+- Plaintext stock data (advisory): perlu enkripsi at-rest.
+- Bot in-memory state (advisory): perlu pindah ke worker terpisah jika
+  deployment serverless.
+- Backup S3 (`/api/admin/backup` dengan `action=run_backup`): masih stub,
+  belum mengimplementasikan dump SQLite + upload S3.

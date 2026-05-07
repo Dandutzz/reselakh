@@ -6,16 +6,51 @@ import makeWASocket, {
 import { prisma } from "./prisma";
 import path from "path";
 import fs from "fs";
+import { placeBotOrder } from "./order";
 
 const activeSockets = new Map<string, WASocket>();
 const pairingCodes = new Map<string, string>();
+const reconnectAttempts = new Map<string, number>();
+const reconnectTimers = new Map<string, NodeJS.Timeout>();
 
 const SESSION_DIR = path.join(process.cwd(), ".wa-sessions");
+const MAX_RECONNECT_ATTEMPTS = 8;
 
 function ensureSessionDir() {
   if (!fs.existsSync(SESSION_DIR)) {
     fs.mkdirSync(SESSION_DIR, { recursive: true });
   }
+}
+
+function clearReconnect(botId: string) {
+  const t = reconnectTimers.get(botId);
+  if (t) {
+    clearTimeout(t);
+    reconnectTimers.delete(botId);
+  }
+}
+
+function scheduleReconnect(botId: string) {
+  const attempts = (reconnectAttempts.get(botId) || 0) + 1;
+  reconnectAttempts.set(botId, attempts);
+  if (attempts > MAX_RECONNECT_ATTEMPTS) {
+    console.warn(
+      `[whatsapp] giving up reconnect for ${botId} after ${attempts} attempts`,
+    );
+    return;
+  }
+  // Exponential backoff capped at 5 minutes.
+  const delay = Math.min(5 * 60_000, 1000 * 2 ** attempts);
+  clearReconnect(botId);
+  reconnectTimers.set(
+    botId,
+    setTimeout(() => {
+      startWhatsAppBot(botId).catch((err) => {
+        console.error(`[whatsapp] reconnect failed for ${botId}:`, err);
+        scheduleReconnect(botId);
+      });
+    }, delay),
+  );
 }
 
 export async function startWhatsAppBot(botId: string): Promise<string | null> {
@@ -48,26 +83,34 @@ export async function startWhatsAppBot(botId: string): Promise<string | null> {
     const { connection, lastDisconnect } = update;
 
     if (connection === "close") {
-      const shouldReconnect =
-        (lastDisconnect?.error as { output?: { statusCode?: number } })?.output
-          ?.statusCode !== DisconnectReason.loggedOut;
+      activeSockets.delete(botId);
+      const statusCode = (
+        lastDisconnect?.error as { output?: { statusCode?: number } }
+      )?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+
+      await prisma.bot.update({
+        where: { id: botId },
+        data: { isConnected: false, status: shouldReconnect ? "reconnecting" : "inactive" },
+      }).catch(() => {});
 
       if (shouldReconnect) {
-        await startWhatsAppBot(botId);
+        scheduleReconnect(botId);
       } else {
-        await prisma.bot.update({
-          where: { id: botId },
-          data: { isConnected: false, status: "inactive" },
-        });
-        activeSockets.delete(botId);
+        reconnectAttempts.delete(botId);
+        clearReconnect(botId);
       }
     }
 
     if (connection === "open") {
-      await prisma.bot.update({
-        where: { id: botId },
-        data: { isConnected: true, status: "active" },
-      });
+      reconnectAttempts.delete(botId);
+      clearReconnect(botId);
+      await prisma.bot
+        .update({
+          where: { id: botId },
+          data: { isConnected: true, status: "active" },
+        })
+        .catch(() => {});
     }
   });
 
@@ -81,7 +124,11 @@ export async function startWhatsAppBot(botId: string): Promise<string | null> {
       const from = msg.key.remoteJid;
       if (!from || !text) continue;
 
-      await handleWhatsAppMessage(botId, botConfig, sock, from, text);
+      try {
+        await handleWhatsAppMessage(botId, botConfig, sock, from, text);
+      } catch (err) {
+        console.error(`[whatsapp] handler error:`, err);
+      }
     }
   });
 
@@ -90,12 +137,12 @@ export async function startWhatsAppBot(botId: string): Promise<string | null> {
   if (!sock.authState.creds.registered && botConfig.phoneNumber) {
     try {
       const code = await sock.requestPairingCode(
-        botConfig.phoneNumber.replace(/[^0-9]/g, "")
+        botConfig.phoneNumber.replace(/[^0-9]/g, ""),
       );
       pairingCodes.set(botId, code);
       return code;
     } catch (err) {
-      console.error("Pairing code error:", err);
+      console.error("[whatsapp] pairing code error:", err);
       return null;
     }
   }
@@ -114,7 +161,7 @@ async function handleWhatsAppMessage(
   },
   sock: WASocket,
   from: string,
-  text: string
+  text: string,
 ) {
   const cmd = text.trim().toLowerCase();
 
@@ -134,6 +181,7 @@ async function handleWhatsAppMessage(
           where: { isActive: true },
           include: {
             variations: {
+              where: { isActive: true },
               include: {
                 _count: { select: { stocks: { where: { isSold: false } } } },
               },
@@ -154,11 +202,15 @@ async function handleWhatsAppMessage(
       for (const prod of cat.products) {
         const totalStock = prod.variations.reduce(
           (sum, v) => sum + v._count.stocks,
-          0
+          0,
         );
-        reply += `  ├ ${prod.name} - Rp ${prod.price.toLocaleString("id-ID")} (Stock: ${totalStock})\n`;
+        reply += `  ├ ${prod.name} - Rp ${prod.price.toLocaleString(
+          "id-ID",
+        )} (Stock: ${totalStock})\n`;
         for (const v of prod.variations) {
-          reply += `  │  └ ${v.name} [${v.code}] - Rp ${v.price.toLocaleString("id-ID")} (${v._count.stocks})\n`;
+          reply += `  │  └ ${v.name} [${v.code}] - Rp ${v.price.toLocaleString(
+            "id-ID",
+          )} (${v._count.stocks})\n`;
         }
       }
       reply += "\n";
@@ -184,92 +236,74 @@ async function handleWhatsAppMessage(
       return;
     }
 
-    const code = parts[0];
+    const code = parts[0]!;
     const qty = parseInt(parts[1] || "1");
 
-    const variation = await prisma.productVariation.findFirst({
-      where: { code, product: { userId: botConfig.userId, isActive: true } },
-      include: { product: true },
+    const result = await placeBotOrder({
+      ownerUserId: botConfig.userId,
+      code,
+      qty,
+      source: "whatsapp",
     });
 
-    if (!variation) {
-      await sock.sendMessage(from, { text: "Produk tidak ditemukan." });
+    if (!result.ok) {
+      await sock.sendMessage(from, { text: result.error });
       return;
     }
-
-    const stocks = await prisma.stock.findMany({
-      where: { variationId: variation.id, isSold: false },
-      take: qty,
-    });
-
-    if (stocks.length < qty) {
-      await sock.sendMessage(from, {
-        text: `Stock tidak cukup. Tersedia: ${stocks.length}`,
-      });
-      return;
-    }
-
-    const totalPrice = variation.price * qty;
-    const accountData = stocks.map((s) => s.data).join("\n");
-
-    await prisma.$transaction([
-      ...stocks.map((s) =>
-        prisma.stock.update({
-          where: { id: s.id },
-          data: { isSold: true, soldAt: new Date() },
-        })
-      ),
-      prisma.order.create({
-        data: {
-          userId: botConfig.userId,
-          productId: variation.product.id,
-          variationId: variation.id,
-          quantity: qty,
-          totalPrice,
-          status: "completed",
-          accountData,
-          source: "whatsapp",
-        },
-      }),
-    ]);
 
     await sock.sendMessage(from, {
-      text: `✅ *Order Berhasil!*\n\nProduk: ${variation.product.name}\nVariasi: ${variation.name}\nJumlah: ${qty}\nTotal: Rp ${totalPrice.toLocaleString("id-ID")}\n\n📋 *Data Akun:*\n${accountData}`,
+      text:
+        `✅ *Order Berhasil!*\n\n` +
+        `Produk: ${result.productName}\n` +
+        `Variasi: ${result.variationName}\n` +
+        `Jumlah: ${qty}\n` +
+        `Total: Rp ${result.totalPrice.toLocaleString("id-ID")}\n\n` +
+        `📋 *Data Akun:*\n${result.accountData}`,
     });
     return;
   }
 
   if (cmd === "help" || cmd === "/help") {
+    const contact = botConfig.contactPerson
+      ? `\n\n📞 Contact: ${botConfig.contactPerson}`
+      : "";
     await sock.sendMessage(from, {
       text:
-        "📌 *Perintah Bot:*\n\n*menu* - Lihat produk\n*order [kode] [jumlah]* - Order produk\n*saldo* - Info saldo\n*help* - Bantuan\n\n" +
-        (botConfig.contactPerson
-          ? `📞 Contact: ${botConfig.contactPerson}`
-          : ""),
+        "📌 *Perintah Bot:*\n\n" +
+        "*menu* - Lihat produk\n" +
+        "*order [kode] [jumlah]* - Order produk\n" +
+        "*saldo* - Info saldo\n" +
+        "*help* - Bantuan" +
+        contact,
     });
     return;
   }
 }
 
 export async function stopWhatsAppBot(botId: string) {
+  clearReconnect(botId);
+  reconnectAttempts.delete(botId);
   const sock = activeSockets.get(botId);
   if (sock) {
     await sock.logout().catch(() => {});
     activeSockets.delete(botId);
   }
-  await prisma.bot.update({
-    where: { id: botId },
-    data: { isConnected: false, status: "inactive" },
-  });
+  pairingCodes.delete(botId);
+  await prisma.bot
+    .update({
+      where: { id: botId },
+      data: { isConnected: false, status: "inactive" },
+    })
+    .catch(() => {});
 }
 
 export async function sendWhatsAppBroadcast(
   botId: string,
   message: string,
-  targets: string[]
+  targets: string[],
 ) {
   const sock = activeSockets.get(botId);
-  if (!sock) throw new Error("Bot not connected");
+  if (!sock) throw new Error("Bot belum terhubung");
 
   const results = [];
   for (const target of targets) {

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth";
+import { handleApiError, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 export async function GET() {
@@ -28,12 +28,22 @@ export async function GET() {
       prisma.order.findMany({
         take: 10,
         orderBy: { createdAt: "desc" },
-        include: { user: { select: { username: true } }, product: { select: { name: true } } },
+        include: {
+          user: { select: { username: true } },
+          product: { select: { name: true } },
+        },
       }),
       prisma.user.findMany({
         take: 10,
         orderBy: { createdAt: "desc" },
-        select: { id: true, username: true, email: true, balance: true, status: true, createdAt: true },
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          balance: true,
+          status: true,
+          createdAt: true,
+        },
       }),
     ]);
 
@@ -49,7 +59,7 @@ export async function GET() {
       recentOrders,
       recentUsers,
     });
-  } catch {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  } catch (err) {
+    return handleApiError("admin/dashboard:GET", err);
   }
 }

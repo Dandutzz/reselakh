@@ -1,34 +1,37 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
+import { z } from "zod";
+import { handleApiError, requireAuth, ValidationError } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { idSchema, parseJson } from "@/lib/validate";
 import {
-  startWhatsAppBot,
-  stopWhatsAppBot,
   getPairingCode,
   isWhatsAppConnected,
+  startWhatsAppBot,
+  stopWhatsAppBot,
 } from "@/lib/whatsapp";
+
+const Schema = z.object({
+  botId: idSchema,
+  action: z.enum(["start", "stop", "status"]),
+});
 
 export async function POST(request: Request) {
   try {
     const session = await requireAuth();
-    const { botId, action } = await request.json();
+    const { botId, action } = await parseJson(request, Schema);
 
     const bot = await prisma.bot.findFirst({
       where: { id: botId, userId: session.id, type: "whatsapp" },
+      select: { id: true },
     });
-
-    if (!bot) {
-      return NextResponse.json({ error: "Bot not found" }, { status: 404 });
-    }
+    if (!bot) throw new ValidationError("Bot tidak ditemukan");
 
     if (action === "start") {
       const pairingCode = await startWhatsAppBot(botId);
       return NextResponse.json({
         success: true,
         pairingCode,
-        message: pairingCode
-          ? `Pairing code: ${pairingCode}`
-          : "Bot connected",
+        message: pairingCode ? `Pairing code: ${pairingCode}` : "Bot connected",
       });
     }
 
@@ -37,15 +40,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true, message: "Bot disconnected" });
     }
 
-    if (action === "status") {
-      return NextResponse.json({
-        connected: isWhatsAppConnected(botId),
-        pairingCode: getPairingCode(botId),
-      });
-    }
-
-    return NextResponse.json({ error: "Invalid action" }, { status: 400 });
+    return NextResponse.json({
+      connected: isWhatsAppConnected(botId),
+      pairingCode: getPairingCode(botId),
+    });
   } catch (err) {
-    return NextResponse.json({ error: String(err) }, { status: 500 });
+    return handleApiError("bot/whatsapp:POST", err);
   }
 }
