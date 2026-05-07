@@ -1,7 +1,7 @@
 # Reselakh
 
 Platform sewa bot auto order Telegram & WhatsApp untuk produk digital. Dibangun
-dengan Next.js 16 (App Router + Turbopack), Prisma 7 + SQLite, dan auth JWT
+dengan Next.js 16 (App Router + Turbopack), Prisma 7 + Postgres, dan auth JWT
 custom.
 
 ## Fitur
@@ -21,18 +21,26 @@ custom.
 ## Setup
 
 ```bash
-# 1. Install dependencies
+# 1. Jalankan Postgres lokal (contoh dengan Docker)
+docker run -d --name reselakh-pg \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=reselakh \
+  -p 5432:5432 postgres:16-alpine
+
+# 2. Install dependencies
 npm install
 
-# 2. Copy environment template & isi NEXTAUTH_SECRET dengan string acak panjang
+# 3. Copy environment template & isi DATABASE_URL + NEXTAUTH_SECRET
 cp .env.example .env
-# Edit .env — minimal NEXTAUTH_SECRET wajib di-set, kalau tidak server tidak mau start.
+# Edit .env — DATABASE_URL ke Postgres-mu, NEXTAUTH_SECRET wajib di-set.
 
-# 3. Migrasi & seed database
+# 4. Migrasi & seed database
+npx prisma migrate deploy   # production: apply migrations only
+# atau di dev:
 npx prisma migrate dev
-npx prisma db seed   # opsional: bikin admin/demo user
+npx prisma db seed          # opsional: bikin admin/demo user
 
-# 4. Jalankan dev server
+# 5. Jalankan dev server
 npm run dev
 ```
 
@@ -55,7 +63,7 @@ Seed script membuat dua akun:
 
 | Variable               | Wajib | Keterangan                                                         |
 | ---------------------- | ----- | ------------------------------------------------------------------ |
-| `DATABASE_URL`         | ya    | URL Prisma datasource. Default `file:./dev.db` (SQLite).            |
+| `DATABASE_URL`         | ya    | Postgres connection string, mis. `postgresql://user:pass@host:5432/db`.|
 | `NEXTAUTH_SECRET`      | ya    | Secret untuk signing JWT. Server tidak mau start kalau kosong.     |
 | `NEXT_PUBLIC_SITE_URL` | tidak | URL canonical untuk metadata SEO/OpenGraph. Opsional di dev.        |
 
@@ -86,6 +94,16 @@ npm run lint       # ESLint
 - **Cross-tenant safety** — semua endpoint `/api/user/*` memvalidasi
   ownership melalui Prisma relation filter (`where: { id, product: { userId } }`),
   sehingga user A tidak bisa membaca/mengubah resource user B.
+- **Variation code uniqueness** — `(ownerUserId, code)` unik di DB level
+  (`@@unique`). User boleh pakai code yang sama dengan user lain (mis. dua
+  reseller punya `NETFLIX1`), tapi tidak boleh punya dua variasi dengan code
+  sama dalam satu akun. Bot order tetap aman karena `placeBotOrder` filter
+  by `product.userId` saat lookup.
+- **Voucher** — voucher dengan tipe `fixed` (Rp) atau `percentage` (% dari
+  subtotal order). Diapply saat order via bot dengan command
+  `order [kode] [jumlah] [voucher]`. Discount selalu dicap di subtotal,
+  tidak pernah negatif. Validasi `expiresAt`, `minPurchase`, `maxUses`,
+  dan `usedCount` di dalam transaction yang sama dengan stock claim.
 
 ## Catatan deployment
 
@@ -94,8 +112,8 @@ npm run lint       # ESLint
   Kalau memang harus serverless, refactor agar bot worker terpisah.
 - Stock berisi data akun dalam **plaintext**. Pertimbangkan enkripsi di
   layer aplikasi (AES-GCM) sebelum disimpan, dengan key dari KMS/secret store.
-- SQLite oke untuk dev — untuk production, ganti ke Postgres dan jalankan
-  `prisma migrate deploy`.
+- Production: gunakan managed Postgres (Railway/Supabase/Neon/RDS) dan
+  jalankan `prisma migrate deploy`. JANGAN deploy dengan SQLite.
 
 ## Status keamanan known issues
 

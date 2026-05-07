@@ -87,19 +87,21 @@ export async function startTelegramBot(botId: string) {
     const args = ctx.message?.text?.split(/\s+/).slice(1) || [];
     if (args.length < 1) {
       await ctx.reply(
-        "Format: /order [kode_variasi] [jumlah]\nContoh: /order NETFLIX1 1",
+        "Format: /order [kode_variasi] [jumlah] [voucher]\nContoh: /order NETFLIX1 1 PROMO10",
       );
       return;
     }
 
     const code = args[0]!;
     const qty = parseInt(args[1] || "1");
+    const voucherCode = args[2] || undefined;
 
     const result = await placeBotOrder({
       ownerUserId: botConfig.userId,
       code,
       qty,
       source: "telegram",
+      voucherCode,
     });
 
     if (!result.ok) {
@@ -107,15 +109,26 @@ export async function startTelegramBot(botId: string) {
       return;
     }
 
-    const text =
-      `✅ *Order Berhasil\\!*\n\n` +
-      `Produk: ${md(result.productName)}\n` +
-      `Variasi: ${md(result.variationName)}\n` +
-      `Jumlah: ${qty}\n` +
-      `Total: Rp ${md(result.totalPrice.toLocaleString("id-ID"))}\n\n` +
-      `📋 *Data Akun:*\n\`\`\`\n${result.accountData}\n\`\`\``;
+    const lines = [
+      `✅ *Order Berhasil\\!*`,
+      ``,
+      `Produk: ${md(result.productName)}`,
+      `Variasi: ${md(result.variationName)}`,
+      `Jumlah: ${qty}`,
+      `Subtotal: Rp ${md(result.subtotal.toLocaleString("id-ID"))}`,
+    ];
+    if (result.discount > 0) {
+      lines.push(
+        `Voucher \\(${md(result.voucherCode || "")}\\): \\-Rp ${md(result.discount.toLocaleString("id-ID"))}`,
+      );
+    }
+    lines.push(
+      `Total: Rp ${md(result.totalPrice.toLocaleString("id-ID"))}`,
+      ``,
+      `📋 *Data Akun:*\n\`\`\`\n${result.accountData}\n\`\`\``,
+    );
 
-    await ctx.reply(text, { parse_mode: "MarkdownV2" });
+    await ctx.reply(lines.join("\n"), { parse_mode: "MarkdownV2" });
   });
 
   bot.command("saldo", async (ctx) => {
@@ -132,7 +145,7 @@ export async function startTelegramBot(botId: string) {
       "📌 Perintah Bot:\n\n" +
         "/start - Mulai\n" +
         "/menu - Lihat produk\n" +
-        "/order [kode] [jumlah] - Order produk\n" +
+        "/order [kode] [jumlah] [voucher] - Order produk\n" +
         "/saldo - Info saldo\n" +
         "/help - Bantuan" +
         contact,

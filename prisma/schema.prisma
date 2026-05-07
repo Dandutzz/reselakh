@@ -4,7 +4,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
 model User {
@@ -159,6 +159,13 @@ model ProductVariation {
 
   stocks Stock[]
   orders Order[]
+
+  // Denormalized to make per-user code uniqueness enforceable at the DB level.
+  // The bot order pipeline still filters by `product.userId` so the relation
+  // is the source of truth — this column just makes (userId, code) unique.
+  ownerUserId String
+  @@unique([ownerUserId, code])
+  @@index([code])
 }
 
 model Stock {

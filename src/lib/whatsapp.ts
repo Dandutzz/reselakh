@@ -231,19 +231,21 @@ async function handleWhatsAppMessage(
     const parts = text.trim().split(/\s+/).slice(1);
     if (parts.length < 1) {
       await sock.sendMessage(from, {
-        text: "Format: *order [kode] [jumlah]*\nContoh: order NETFLIX1 1",
+        text: "Format: *order [kode] [jumlah] [voucher]*\nContoh: order NETFLIX1 1 PROMO10",
       });
       return;
     }
 
     const code = parts[0]!;
     const qty = parseInt(parts[1] || "1");
+    const voucherCode = parts[2] || undefined;
 
     const result = await placeBotOrder({
       ownerUserId: botConfig.userId,
       code,
       qty,
       source: "whatsapp",
+      voucherCode,
     });
 
     if (!result.ok) {
@@ -251,15 +253,26 @@ async function handleWhatsAppMessage(
       return;
     }
 
-    await sock.sendMessage(from, {
-      text:
-        `✅ *Order Berhasil!*\n\n` +
-        `Produk: ${result.productName}\n` +
-        `Variasi: ${result.variationName}\n` +
-        `Jumlah: ${qty}\n` +
-        `Total: Rp ${result.totalPrice.toLocaleString("id-ID")}\n\n` +
-        `📋 *Data Akun:*\n${result.accountData}`,
-    });
+    const lines = [
+      `✅ *Order Berhasil!*`,
+      ``,
+      `Produk: ${result.productName}`,
+      `Variasi: ${result.variationName}`,
+      `Jumlah: ${qty}`,
+      `Subtotal: Rp ${result.subtotal.toLocaleString("id-ID")}`,
+    ];
+    if (result.discount > 0) {
+      lines.push(
+        `Voucher (${result.voucherCode || ""}): -Rp ${result.discount.toLocaleString("id-ID")}`,
+      );
+    }
+    lines.push(
+      `Total: Rp ${result.totalPrice.toLocaleString("id-ID")}`,
+      ``,
+      `📋 *Data Akun:*\n${result.accountData}`,
+    );
+
+    await sock.sendMessage(from, { text: lines.join("\n") });
     return;
   }
 
@@ -271,7 +284,7 @@ async function handleWhatsAppMessage(
       text:
         "📌 *Perintah Bot:*\n\n" +
         "*menu* - Lihat produk\n" +
-        "*order [kode] [jumlah]* - Order produk\n" +
+        "*order [kode] [jumlah] [voucher]* - Order produk\n" +
         "*saldo* - Info saldo\n" +
         "*help* - Bantuan" +
         contact,

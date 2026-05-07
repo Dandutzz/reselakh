@@ -64,8 +64,19 @@ export async function POST(request: Request) {
     });
     if (!product) throw new ValidationError("Produk tidak ditemukan");
 
-    const variation = await prisma.productVariation.create({ data });
-    return NextResponse.json({ success: true, variation });
+    try {
+      const variation = await prisma.productVariation.create({
+        data: { ...data, ownerUserId: session.id },
+      });
+      return NextResponse.json({ success: true, variation });
+    } catch (err) {
+      if (isUniqueCodeError(err)) {
+        throw new ValidationError(
+          `Code "${data.code}" sudah dipakai oleh variasi lain milikmu. Pilih code lain.`,
+        );
+      }
+      throw err;
+    }
   } catch (err) {
     return handleApiError("user/variations:POST", err);
   }
@@ -76,11 +87,29 @@ export async function PATCH(request: Request) {
     const session = await requireAuth();
     const { id, ...data } = await parseJson(request, UpdateSchema);
     await ensureVariationOwned(id, session.id);
-    const variation = await prisma.productVariation.update({ where: { id }, data });
-    return NextResponse.json({ success: true, variation });
+    try {
+      const variation = await prisma.productVariation.update({ where: { id }, data });
+      return NextResponse.json({ success: true, variation });
+    } catch (err) {
+      if (isUniqueCodeError(err)) {
+        throw new ValidationError(
+          `Code "${data.code}" sudah dipakai oleh variasi lain milikmu. Pilih code lain.`,
+        );
+      }
+      throw err;
+    }
   } catch (err) {
     return handleApiError("user/variations:PATCH", err);
   }
+}
+
+function isUniqueCodeError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code?: string }).code === "P2002"
+  );
 }
 
 export async function DELETE(request: Request) {
