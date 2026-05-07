@@ -25,6 +25,7 @@ interface BotData {
   status: string;
   contactPerson: string | null;
   welcomeMsg: string | null;
+  startBanner: string | null;
   ownerJids: string | null;
   adminJids: string | null;
   qrisServerId: string | null;
@@ -46,6 +47,7 @@ interface FormState {
   isNotification: boolean;
   contactPerson: string;
   welcomeMsg: string;
+  startBanner: string;
   ownerJids: string;
   adminJids: string;
   qrisServerId: string;
@@ -60,6 +62,7 @@ const emptyForm = (): FormState => ({
   isNotification: true,
   contactPerson: "",
   welcomeMsg: "",
+  startBanner: "",
   ownerJids: "",
   adminJids: "",
   qrisServerId: "",
@@ -105,6 +108,7 @@ export default function BotsPage() {
       isNotification: bot.isNotification,
       contactPerson: bot.contactPerson || "",
       welcomeMsg: bot.welcomeMsg || "",
+      startBanner: bot.startBanner || "",
       ownerJids: bot.ownerJids || "",
       adminJids: bot.adminJids || "",
       qrisServerId: bot.qrisServerId || "",
@@ -124,6 +128,7 @@ export default function BotsPage() {
       isNotification: form.isNotification,
       contactPerson: form.contactPerson || null,
       welcomeMsg: form.welcomeMsg || null,
+      startBanner: form.startBanner || null,
       ownerJids: form.ownerJids || null,
       adminJids: form.adminJids || null,
       qrisServerId: form.qrisServerId || null,
@@ -420,7 +425,7 @@ export default function BotsPage() {
                   className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent"
                 />
                 <textarea
-                  placeholder="Pesan Welcome (opsional)"
+                  placeholder="Pesan Welcome tambahan (opsional, dipakai sebagai header /start)"
                   value={form.welcomeMsg}
                   onChange={(e) =>
                     setForm({ ...form, welcomeMsg: e.target.value })
@@ -428,6 +433,21 @@ export default function BotsPage() {
                   rows={3}
                   className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent resize-none"
                 />
+                {form.type === "telegram" && (
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">
+                      Banner /start (URL gambar atau Telegram file_id)
+                    </label>
+                    <input
+                      placeholder="https://… atau file_id"
+                      value={form.startBanner}
+                      onChange={(e) =>
+                        setForm({ ...form, startBanner: e.target.value })
+                      }
+                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent text-sm"
+                    />
+                  </div>
+                )}
                 <div className="flex gap-4">
                   <label className="flex items-center gap-2 text-sm">
                     <input

@@ -219,6 +219,8 @@ model Bot {
   isNotification Boolean @default(false)
   contactPerson  String?
   welcomeMsg     String?
+  // Optional banner image for Telegram /start (URL or Telegram file_id).
+  startBanner    String?
   isConnected    Boolean @default(false)
   status         String  @default("inactive") // active | inactive | error
 

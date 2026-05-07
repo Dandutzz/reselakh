@@ -33,6 +33,7 @@ const BaseFields = {
   isNotification: z.boolean().optional(),
   contactPerson: z.string().trim().max(120).optional().nullable(),
   welcomeMsg: z.string().max(2000).optional().nullable(),
+  startBanner: z.string().trim().max(1024).optional().nullable(),
   ownerJids: jidListSchema,
   adminJids: jidListSchema,
   qrisServerId: z.string().trim().max(64).optional().nullable(),
