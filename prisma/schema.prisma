@@ -1,0 +1,273 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id            String   @id @default(uuid())
+  username      String   @unique
+  email         String   @unique
+  password      String
+  role          String   @default("user") // admin | user
+  balance       Float    @default(0)
+  status        String   @default("active") // active | banned | suspended
+  phone         String?
+  avatar        String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  resellers     Reseller[]
+  transactions  Transaction[]
+  mutations     Mutation[]
+  withdrawals   Withdrawal[]
+  vouchers      VoucherUsage[]
+  categories    Category[]
+  products      Product[]
+  bots          Bot[]
+  orders        Order[]
+  qrisSelection UserQrisSelection?
+  backupConfigs BackupConfig[]
+}
+
+model Reseller {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  phone     String?
+  email     String?
+  balance   Float    @default(0)
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders Order[]
+}
+
+model QrisServer {
+  id        String   @id @default(uuid())
+  name      String
+  provider  String // eqris | pakasir | midtrans
+  apiKey    String?
+  apiSecret String?
+  merchantId String?
+  isActive  Boolean  @default(true)
+  config    String?  // JSON config
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  selections UserQrisSelection[]
+}
+
+model UserQrisSelection {
+  id          String     @id @default(uuid())
+  userId      String     @unique
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  qrisId      String
+  qrisServer  QrisServer @relation(fields: [qrisId], references: [id])
+  createdAt   DateTime   @default(now())
+}
+
+model Transaction {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        String   // debit | credit
+  amount      Float
+  description String
+  reference   String?
+  status      String   @default("completed")
+  createdAt   DateTime @default(now())
+}
+
+model Mutation {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        String   // debit | credit
+  amount      Float
+  balBefore   Float
+  balAfter    Float
+  description String
+  source      String?  // purchase | topup | withdraw | admin | voucher
+  createdAt   DateTime @default(now())
+}
+
+model Withdrawal {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount      Float
+  bankName    String?
+  bankAccount String?
+  bankHolder  String?
+  status      String   @default("pending") // pending | approved | rejected
+  note        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Category {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  slug      String
+  icon      String?
+  sortOrder Int       @default(0)
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  products Product[]
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  name        String
+  slug        String
+  description String?
+  price       Float
+  image       String?
+  banner      String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  variations ProductVariation[]
+  orders     Order[]
+}
+
+model ProductVariation {
+  id        String   @id @default(uuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name      String
+  code      String
+  price     Float
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stocks Stock[]
+  orders Order[]
+}
+
+model Stock {
+  id          String           @id @default(uuid())
+  variationId String
+  variation   ProductVariation @relation(fields: [variationId], references: [id], onDelete: Cascade)
+  data        String   // email|password|info format
+  isSold      Boolean  @default(false)
+  soldAt      DateTime?
+  createdAt   DateTime @default(now())
+}
+
+model Order {
+  id           String            @id @default(uuid())
+  userId       String
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resellerId   String?
+  reseller     Reseller?         @relation(fields: [resellerId], references: [id])
+  productId    String
+  product      Product           @relation(fields: [productId], references: [id])
+  variationId  String?
+  variation    ProductVariation? @relation(fields: [variationId], references: [id])
+  quantity     Int               @default(1)
+  totalPrice   Float
+  status       String            @default("pending") // pending | completed | failed | refunded
+  accountData  String?           // delivered account data
+  source       String            @default("web") // web | telegram | whatsapp
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+}
+
+model Bot {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type          String   // telegram | whatsapp
+  name          String
+  token         String?  // telegram bot token
+  phoneNumber   String?  // whatsapp number
+  sessionData   String?  // whatsapp session json
+  isAutoOrder   Boolean  @default(false)
+  isNotification Boolean @default(false)
+  contactPerson String?
+  welcomeMsg    String?
+  isConnected   Boolean  @default(false)
+  status        String   @default("inactive") // active | inactive | error
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  broadcasts Broadcast[]
+}
+
+model Broadcast {
+  id        String   @id @default(uuid())
+  botId     String
+  bot       Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  message   String
+  targets   String   // JSON array of targets
+  status    String   @default("pending") // pending | sent | failed
+  sentAt    DateTime?
+  createdAt DateTime @default(now())
+}
+
+model Voucher {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  amount      Float
+  type        String   @default("fixed") // fixed | percentage
+  maxUses     Int      @default(1)
+  usedCount   Int      @default(0)
+  minPurchase Float?
+  expiresAt   DateTime?
+  isActive    Boolean  @default(true)
+  createdBy   String   // admin who created
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  usages VoucherUsage[]
+}
+
+model VoucherUsage {
+  id        String   @id @default(uuid())
+  voucherId String
+  voucher   Voucher  @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount    Float
+  usedAt    DateTime @default(now())
+}
+
+model BackupConfig {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        String   // local | s3
+  isEnabled   Boolean  @default(false)
+  s3Bucket    String?
+  s3Region    String?
+  s3Key       String?
+  s3Secret    String?
+  localPath   String?
+  schedule    String?  // cron expression
+  lastBackup  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Setting {
+  id    String @id @default(uuid())
+  key   String @unique
+  value String
+}
