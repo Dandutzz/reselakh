@@ -5,9 +5,17 @@ import { prisma } from "@/lib/prisma";
 import { generateUniqueSlug } from "@/lib/utils";
 import { idSchema, moneySchema, parseJson } from "@/lib/validate";
 
+const codeSchema = z
+  .string()
+  .trim()
+  .min(1, "Kode produk wajib")
+  .max(50, "Kode produk terlalu panjang")
+  .regex(/^[A-Za-z0-9_-]+$/, "Kode produk hanya boleh huruf/angka/tanda - dan _");
+
 const CreateSchema = z.object({
   categoryId: idSchema,
   name: z.string().trim().min(1).max(120),
+  code: codeSchema,
   description: z.string().max(2000).optional().nullable(),
   price: moneySchema,
   image: z.string().url().max(500).optional().nullable(),
@@ -18,6 +26,7 @@ const UpdateSchema = z.object({
   id: idSchema,
   categoryId: idSchema.optional(),
   name: z.string().trim().min(1).max(120).optional(),
+  code: codeSchema.optional(),
   description: z.string().max(2000).optional().nullable(),
   price: moneySchema.optional(),
   image: z.string().url().max(500).optional().nullable(),
@@ -63,19 +72,29 @@ export async function POST(request: Request) {
       return !existing;
     });
 
-    const product = await prisma.product.create({
-      data: {
-        userId: session.id,
-        categoryId: data.categoryId,
-        name: data.name,
-        slug,
-        description: data.description ?? null,
-        price: data.price,
-        image: data.image ?? null,
-        banner: data.banner ?? null,
-      },
-    });
-    return NextResponse.json({ success: true, product });
+    try {
+      const product = await prisma.product.create({
+        data: {
+          userId: session.id,
+          categoryId: data.categoryId,
+          name: data.name,
+          slug,
+          code: data.code.toUpperCase(),
+          description: data.description ?? null,
+          price: data.price,
+          image: data.image ?? null,
+          banner: data.banner ?? null,
+        },
+      });
+      return NextResponse.json({ success: true, product });
+    } catch (err) {
+      if (isUniqueCodeError(err)) {
+        throw new ValidationError(
+          `Kode produk "${data.code}" sudah dipakai produk lain milikmu. Pilih kode lain.`,
+        );
+      }
+      throw err;
+    }
   } catch (err) {
     return handleApiError("user/products:POST", err);
   }
@@ -110,12 +129,33 @@ export async function PATCH(request: Request) {
         return !existing;
       });
     }
+    if (rest.code) {
+      data.code = rest.code.toUpperCase();
+    }
 
-    const product = await prisma.product.update({ where: { id }, data });
-    return NextResponse.json({ success: true, product });
+    try {
+      const product = await prisma.product.update({ where: { id }, data });
+      return NextResponse.json({ success: true, product });
+    } catch (err) {
+      if (isUniqueCodeError(err)) {
+        throw new ValidationError(
+          `Kode produk "${rest.code}" sudah dipakai produk lain milikmu. Pilih kode lain.`,
+        );
+      }
+      throw err;
+    }
   } catch (err) {
     return handleApiError("user/products:PATCH", err);
   }
+}
+
+function isUniqueCodeError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code?: string }).code === "P2002"
+  );
 }
 
 export async function DELETE(request: Request) {

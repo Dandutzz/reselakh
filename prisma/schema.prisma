@@ -134,6 +134,7 @@ model Product {
   category    Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   name        String
   slug        String
+  code        String
   description String?
   price       Float
   image       String?
@@ -144,6 +145,9 @@ model Product {
 
   variations ProductVariation[]
   orders     Order[]
+
+  @@unique([userId, code])
+  @@index([code])
 }
 
 model ProductVariation {

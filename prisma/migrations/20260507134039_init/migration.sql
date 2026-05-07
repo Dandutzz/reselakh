@@ -123,6 +123,7 @@ CREATE TABLE "Product" (
     "categoryId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "slug" TEXT NOT NULL,
+    "code" TEXT NOT NULL,
     "description" TEXT,
     "price" DOUBLE PRECISION NOT NULL,
     "image" TEXT,
@@ -278,6 +279,12 @@ CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "UserQrisSelection_userId_key" ON "UserQrisSelection"("userId");
+
+-- CreateIndex
+CREATE INDEX "Product_code_idx" ON "Product"("code");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Product_userId_code_key" ON "Product"("userId", "code");
 
 -- CreateIndex
 CREATE INDEX "ProductVariation_code_idx" ON "ProductVariation"("code");
