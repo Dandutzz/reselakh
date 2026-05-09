@@ -8,6 +8,9 @@ import {
   CreateQrisResult,
   PaymentProvider,
   QrisServerLike,
+  getKodeUnikRange,
+  getServerFee,
+  pickKodeUnik,
 } from "./types";
 
 export type { CreateQrisRequest, CreateQrisResult, CreateQrisError, CheckStatusResult, CheckStatusError, PaymentProvider, QrisServerLike };
@@ -23,16 +26,49 @@ export function isSupportedProvider(provider: string | null | undefined): provid
   return normaliseProvider(provider) !== null;
 }
 
+/**
+ * Apply per-server "biaya admin" (`config.fee`) and a random "kode unik"
+ * (`config.kodeUnikMin/Max`, 1-99) on top of the caller-supplied subtotal,
+ * then delegate to the underlying provider with the final amount. Returns
+ * `fee = serverFee + kodeUnik` and `totalAmount = subtotal + fee` so that
+ * `Payment.amount` (subtotal), `Payment.fee`, and `Payment.totalAmount` all
+ * line up with what the customer actually pays — and so that mutasi matching
+ * (which compares against `Payment.totalAmount`) keeps working.
+ */
 export async function createQris(
   server: QrisServerLike,
   req: CreateQrisRequest,
 ): Promise<CreateQrisResult | CreateQrisError> {
   const provider = normaliseProvider(server.provider);
-  if (provider === "eqris") return eqris.createQris(server, req);
-  if (provider === "pakasir") return pakasir.createQris(server, req);
+  if (!provider) {
+    return {
+      ok: false,
+      error: `Provider QRIS '${server.provider}' belum didukung (eqris | pakasir)`,
+    };
+  }
+
+  const subtotal = Math.max(0, Math.round(req.amount));
+  const serverFee = getServerFee(server);
+  const range = getKodeUnikRange(server);
+  const kodeUnik = range ? pickKodeUnik(range) : 0;
+  const finalAmount = subtotal + serverFee + kodeUnik;
+  const totalFee = serverFee + kodeUnik;
+
+  const adjustedReq: CreateQrisRequest = { ...req, amount: finalAmount };
+  const result =
+    provider === "eqris"
+      ? await eqris.createQris(server, adjustedReq)
+      : await pakasir.createQris(server, adjustedReq);
+
+  if (!result.ok) return result;
+
+  // Override the gateway-echoed totals with our locally-authoritative
+  // breakdown. Payment.fee = adminFee + kodeUnik so mutasi matching can use
+  // Payment.totalAmount directly (= subtotal + fee).
   return {
-    ok: false,
-    error: `Provider QRIS '${server.provider}' belum didukung (eqris | pakasir)`,
+    ...result,
+    fee: totalFee,
+    totalAmount: finalAmount,
   };
 }
 
