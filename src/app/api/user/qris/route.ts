@@ -3,8 +3,38 @@ import { z } from "zod";
 import { handleApiError, requireAuth, ValidationError } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { idSchema, parseJson } from "@/lib/validate";
+import { getKodeUnikRange, getServerFee } from "@/lib/payments/types";
 
 const SelectSchema = z.object({ qrisId: idSchema });
+
+interface PublicServer {
+  id: string;
+  name: string;
+  provider: string;
+  isActive: boolean;
+  fee: number;
+  kodeUnik: { min: number; max: number } | null;
+}
+
+function toPublic(s: {
+  id: string;
+  name: string;
+  provider: string;
+  isActive: boolean;
+  apiKey: string | null;
+  apiSecret: string | null;
+  merchantId: string | null;
+  config: string | null;
+}): PublicServer {
+  return {
+    id: s.id,
+    name: s.name,
+    provider: s.provider,
+    isActive: s.isActive,
+    fee: getServerFee(s),
+    kodeUnik: getKodeUnikRange(s),
+  };
+}
 
 export async function GET() {
   try {
@@ -12,16 +42,43 @@ export async function GET() {
     const [servers, selection] = await Promise.all([
       prisma.qrisServer.findMany({
         where: { isActive: true },
-        select: { id: true, name: true, isActive: true },
+        select: {
+          id: true,
+          name: true,
+          provider: true,
+          isActive: true,
+          apiKey: true,
+          apiSecret: true,
+          merchantId: true,
+          config: true,
+        },
       }),
       prisma.userQrisSelection.findUnique({
         where: { userId: session.id },
         include: {
-          qrisServer: { select: { id: true, name: true, isActive: true } },
+          qrisServer: {
+            select: {
+              id: true,
+              name: true,
+              provider: true,
+              isActive: true,
+              apiKey: true,
+              apiSecret: true,
+              merchantId: true,
+              config: true,
+            },
+          },
         },
       }),
     ]);
-    return NextResponse.json({ servers, selection });
+    const publicServers = servers.map(toPublic);
+    const publicSelection = selection
+      ? {
+          ...selection,
+          qrisServer: selection.qrisServer ? toPublic(selection.qrisServer) : null,
+        }
+      : null;
+    return NextResponse.json({ servers: publicServers, selection: publicSelection });
   } catch (err) {
     return handleApiError("user/qris:GET", err);
   }
