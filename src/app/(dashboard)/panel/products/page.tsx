@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Plus,
@@ -41,11 +42,6 @@ interface ProductData {
   stockCount: number;
 }
 
-interface CategoryOption {
-  id: string;
-  name: string;
-}
-
 type CashbackType = "nominal" | "percent";
 
 interface ProductConfig {
@@ -55,60 +51,8 @@ interface ProductConfig {
   profit?: number;
   modeBulking?: number;
   stockFormat?: string;
+  defaultAutoDelivery?: boolean;
 }
-
-interface FormState {
-  id: string | null;
-  categoryId: string;
-  code: string;
-  name: string;
-  description: string;
-  image: string;
-  price: number;
-  isActive: boolean;
-
-  useVariations: boolean;
-  stockFormat: string;
-  modeEditStock: boolean;
-  bulkStock: string;
-
-  terms: string;
-  cashbackType: CashbackType;
-  cashbackValue: number;
-  profit: number;
-  modeBulking: number;
-}
-
-const STOCK_FORMAT_TEMPLATES: Array<{ value: string; label: string; hint: string }> = [
-  { value: "email|password", label: "Default (email | password)", hint: "email | password" },
-  {
-    value: "email|password|info",
-    label: "Email + password + info",
-    hint: "email | password | info",
-  },
-  { value: "username|password", label: "Username + password", hint: "username | password" },
-  { value: "key", label: "Key / token only", hint: "key" },
-];
-
-const emptyForm: FormState = {
-  id: null,
-  categoryId: "",
-  code: "",
-  name: "",
-  description: "",
-  image: "",
-  price: 0,
-  isActive: true,
-  useVariations: false,
-  stockFormat: "email|password",
-  modeEditStock: false,
-  bulkStock: "",
-  terms: "",
-  cashbackType: "nominal",
-  cashbackValue: 0,
-  profit: 0,
-  modeBulking: 0,
-};
 
 function parseConfig(raw: string | null): ProductConfig {
   if (!raw) return {};
@@ -145,31 +89,23 @@ function defaultVariationOf(p: ProductData): VariationRow | null {
 
 export default function ProductsPage() {
   const [products, setProducts] = useState<ProductData[]>([]);
-  const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<"all" | "single" | "variation">("all");
   const [hideEmpty, setHideEmpty] = useState(false);
 
-  const [modal, setModal] = useState<"none" | "form" | "import">("none");
-  const [form, setForm] = useState<FormState>(emptyForm);
-  const [stocksPreview, setStocksPreview] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
+  const [importOpen, setImportOpen] = useState(false);
   const [importTargetId, setImportTargetId] = useState<string>("");
   const [importBulk, setImportBulk] = useState<string>("");
   const [importReplace, setImportReplace] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importSaving, setImportSaving] = useState(false);
 
   const fetchData = async () => {
-    const [pRes, cRes] = await Promise.all([
-      fetch("/api/user/products"),
-      fetch("/api/user/categories"),
-    ]);
-    const [pData, cData] = await Promise.all([pRes.json(), cRes.json()]);
-    setProducts(pData.products || []);
-    setCategories(cData.categories || []);
+    const res = await fetch("/api/user/products");
+    const data = await res.json();
+    setProducts(data.products || []);
     setLoading(false);
   };
 
@@ -201,52 +137,6 @@ export default function ProductsPage() {
     });
   }, [products, search, typeFilter, hideEmpty]);
 
-  const openAdd = () => {
-    setForm({ ...emptyForm, categoryId: categories[0]?.id ?? "" });
-    setStocksPreview([]);
-    setError(null);
-    setModal("form");
-  };
-
-  const openEdit = async (p: ProductData) => {
-    const cfg = parseConfig(p.config);
-    const def = defaultVariationOf(p);
-    const hasMulti =
-      p.variations.filter((v) => v.code !== `${p.code}_MAIN`).length > 0;
-    setForm({
-      id: p.id,
-      categoryId: "",
-      code: p.code,
-      name: p.name,
-      description: p.description ?? "",
-      image: p.image ?? "",
-      price: p.price,
-      isActive: p.isActive,
-      useVariations: hasMulti,
-      stockFormat: cfg.stockFormat ?? "email|password",
-      modeEditStock: false,
-      bulkStock: "",
-      terms: cfg.terms ?? "",
-      cashbackType: cfg.cashbackType ?? "nominal",
-      cashbackValue: cfg.cashbackValue ?? 0,
-      profit: cfg.profit ?? 0,
-      modeBulking: cfg.modeBulking ?? 0,
-    });
-    setStocksPreview([]);
-    setError(null);
-    setModal("form");
-    if (def) {
-      try {
-        const res = await fetch(`/api/user/stocks?variationId=${def.id}&sold=false`);
-        const data = await res.json();
-        const arr: string[] = (data.stocks || []).map((s: { data: string }) => s.data);
-        setStocksPreview(arr);
-      } catch {
-        // ignore
-      }
-    }
-  };
-
   const handleDelete = async (id: string) => {
     if (!confirm("Hapus produk?")) return;
     await fetch("/api/user/products", {
@@ -257,106 +147,6 @@ export default function ProductsPage() {
     fetchData();
   };
 
-  const handleSubmit = async () => {
-    setError(null);
-    setSaving(true);
-    try {
-      const config: ProductConfig = {};
-      if (form.terms.trim()) config.terms = form.terms.trim();
-      if (form.cashbackValue > 0) {
-        config.cashbackType = form.cashbackType;
-        config.cashbackValue = form.cashbackValue;
-      }
-      if (form.profit > 0) config.profit = form.profit;
-      if (form.modeBulking > 0) config.modeBulking = form.modeBulking;
-      if (form.stockFormat) config.stockFormat = form.stockFormat;
-
-      let productId = form.id;
-      if (!productId) {
-        if (!form.categoryId) throw new Error("Pilih kategori dulu");
-        if (!form.code.trim()) throw new Error("Kode Produk wajib diisi");
-        const res = await fetch("/api/user/products", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            categoryId: form.categoryId,
-            name: form.name,
-            code: form.code,
-            description: form.description || null,
-            image: form.image || null,
-            price: form.price,
-            config,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Gagal menyimpan produk");
-        productId = data.product.id as string;
-      } else {
-        const res = await fetch("/api/user/products", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: productId,
-            name: form.name || undefined,
-            description: form.description || null,
-            image: form.image || null,
-            price: form.price,
-            isActive: form.isActive,
-            config,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Gagal menyimpan produk");
-      }
-
-      if (!form.useVariations && form.bulkStock.trim()) {
-        const varRes = await fetch(`/api/user/variations?productId=${productId}`);
-        const varData = await varRes.json();
-        const list: VariationRow[] = varData.variations || [];
-        const wanted = `${form.code.toUpperCase()}_MAIN`;
-        let defVar =
-          list.find((v) => v.code === wanted) ||
-          list.find((v) => v.name === "Default");
-        if (!defVar) {
-          const created = await fetch("/api/user/variations", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              productId,
-              name: "Default",
-              code: wanted,
-              price: form.price,
-            }),
-          });
-          const createdData = await created.json();
-          if (!created.ok)
-            throw new Error(createdData.error || "Gagal membuat variasi default");
-          defVar = createdData.variation;
-        }
-        if (!defVar) throw new Error("Variasi default tidak tersedia");
-        const stockRes = await fetch("/api/user/stocks", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            variationId: defVar.id,
-            bulk: form.bulkStock,
-            replaceAll: form.modeEditStock,
-          }),
-        });
-        const stockData = await stockRes.json();
-        if (!stockRes.ok) throw new Error(stockData.error || "Gagal menambah stock");
-      }
-
-      setModal("none");
-      setSaving(false);
-      fetchData();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Gagal menyimpan";
-      setError(msg);
-      setSaving(false);
-    }
-  };
-
   const openImport = () => {
     const def = products[0];
     const targetId = def
@@ -365,13 +155,13 @@ export default function ProductsPage() {
     setImportTargetId(targetId);
     setImportBulk("");
     setImportReplace(false);
-    setError(null);
-    setModal("import");
+    setImportError(null);
+    setImportOpen(true);
   };
 
   const handleImportSubmit = async () => {
-    setError(null);
-    setSaving(true);
+    setImportError(null);
+    setImportSaving(true);
     try {
       if (!importTargetId) throw new Error("Pilih variasi tujuan");
       if (!importBulk.trim()) throw new Error("Tempel akun yang akan di-import");
@@ -386,27 +176,25 @@ export default function ProductsPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Gagal import akun");
-      setModal("none");
-      setSaving(false);
+      setImportOpen(false);
+      setImportSaving(false);
       fetchData();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Gagal import";
-      setError(msg);
-      setSaving(false);
+      setImportError(msg);
+      setImportSaving(false);
     }
   };
 
-  const formatHint =
-    STOCK_FORMAT_TEMPLATES.find((t) => t.value === form.stockFormat)?.hint ?? form.stockFormat;
   const importLines = importBulk.split("\n").filter((l) => l.trim()).length;
-  const bulkLines = form.bulkStock.split("\n").filter((l) => l.trim()).length;
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
+          <p className="text-xs text-gray-500">Quick Tools Product</p>
           <h1 className="text-2xl font-bold">Produk</h1>
-          <p className="text-sm text-gray-500">Kelola produk digital + stock akun</p>
+          <p className="text-sm text-gray-500">Kelola produk digital + stok akun</p>
         </div>
       </div>
 
@@ -470,12 +258,12 @@ export default function ProductsPage() {
           >
             <Upload className="w-4 h-4" /> Import Akun
           </button>
-          <button
-            onClick={openAdd}
+          <Link
+            href="/panel/products/new"
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-500 text-white font-medium text-sm"
           >
             <Plus className="w-4 h-4" /> Tambah Produk
-          </button>
+          </Link>
         </div>
       </div>
 
@@ -493,7 +281,6 @@ export default function ProductsPage() {
                 <th className="text-right px-4 py-3">Bulk</th>
                 <th className="text-center px-4 py-3">Stok</th>
                 <th className="text-center px-4 py-3">Variasi</th>
-                <th className="text-center px-4 py-3">Sumber</th>
                 <th className="text-right px-4 py-3">Aksi</th>
               </tr>
             </thead>
@@ -547,20 +334,15 @@ export default function ProductsPage() {
                         <span className="text-gray-400">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-center align-top">
-                      <span className="inline-block px-2 py-0.5 rounded-full text-xs bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-300">
-                        Sendiri
-                      </span>
-                    </td>
                     <td className="px-4 py-3 text-right align-top">
                       <div className="inline-flex gap-1">
-                        <button
-                          onClick={() => openEdit(p)}
+                        <Link
+                          href={`/panel/products/${p.id}/edit`}
                           aria-label="Edit"
                           className="p-1.5 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-800"
                         >
                           <Pencil className="w-4 h-4" />
-                        </button>
+                        </Link>
                         <button
                           onClick={() => handleDelete(p.id)}
                           aria-label="Hapus"
@@ -575,7 +357,7 @@ export default function ProductsPage() {
               })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="text-center text-sm text-gray-400 py-8">
+                  <td colSpan={8} className="text-center text-sm text-gray-400 py-8">
                     {products.length === 0
                       ? "Belum ada produk. Buat kategori dulu, lalu tambah produk."
                       : "Tidak ada produk yang cocok dengan filter."}
@@ -588,292 +370,7 @@ export default function ProductsPage() {
       )}
 
       <AnimatePresence>
-        {modal === "form" && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          >
-            <motion.div
-              initial={{ scale: 0.95 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0.95 }}
-              className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-3xl shadow-2xl max-h-[90vh] flex flex-col"
-            >
-              <div className="flex items-center justify-between p-5 border-b border-gray-100 dark:border-slate-800">
-                <h3 className="text-lg font-bold">
-                  {form.id ? "Edit Produk" : "Tambah Produk"}
-                </h3>
-                <button
-                  onClick={() => setModal("none")}
-                  className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="overflow-y-auto p-5 space-y-4">
-                <div className="grid sm:grid-cols-[140px_1fr] gap-3">
-                  <div className="aspect-square rounded-2xl border-2 border-dashed border-gray-200 dark:border-slate-700 flex flex-col items-center justify-center text-gray-400 text-xs px-2 text-center overflow-hidden">
-                    {form.image ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={form.image}
-                        alt={form.name}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <>
-                        <Upload className="w-5 h-5 mb-1" />
-                        URL gambar di bawah
-                      </>
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    {!form.id && (
-                      <select
-                        value={form.categoryId}
-                        onChange={(e) => setForm({ ...form, categoryId: e.target.value })}
-                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent text-sm"
-                      >
-                        <option value="">Pilih Kategori</option>
-                        {categories.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                    <input
-                      placeholder="Kode Produk (huruf/angka/-_)"
-                      value={form.code}
-                      disabled={!!form.id}
-                      onChange={(e) =>
-                        setForm({
-                          ...form,
-                          code: e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, ""),
-                        })
-                      }
-                      maxLength={50}
-                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent font-mono text-sm disabled:opacity-60"
-                    />
-                    <input
-                      placeholder="Nama Produk"
-                      value={form.name}
-                      onChange={(e) => setForm({ ...form, name: e.target.value })}
-                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent text-sm"
-                    />
-                    <input
-                      placeholder="URL Gambar (opsional)"
-                      value={form.image}
-                      onChange={(e) => setForm({ ...form, image: e.target.value })}
-                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent text-xs"
-                    />
-                  </div>
-                </div>
-
-                <Toggle
-                  checked={form.useVariations}
-                  onChange={(v) => setForm({ ...form, useVariations: v })}
-                  label="Gunakan variasi produk"
-                />
-
-                {form.useVariations ? (
-                  <div className="text-sm text-gray-500 bg-gray-50 dark:bg-slate-800/60 rounded-xl p-3">
-                    Mode variasi aktif. Simpan produk dulu, lalu kelola variasi & stock di
-                    halaman <span className="font-medium">Variasi & Stock</span>.
-                  </div>
-                ) : (
-                  <div className="space-y-3 rounded-xl border border-gray-100 dark:border-slate-800 p-3">
-                    <div>
-                      <label className="text-xs text-gray-500 mb-1 block">Form Stock</label>
-                      <select
-                        value={form.stockFormat}
-                        onChange={(e) =>
-                          setForm({ ...form, stockFormat: e.target.value })
-                        }
-                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent text-sm"
-                      >
-                        {STOCK_FORMAT_TEMPLATES.map((t) => (
-                          <option key={t.value} value={t.value}>
-                            {t.label}
-                          </option>
-                        ))}
-                      </select>
-                      <p className="mt-1 text-xs text-gray-500">
-                        Format:{" "}
-                        <code className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-800 text-xs">
-                          {formatHint}
-                        </code>
-                      </p>
-                    </div>
-
-                    {form.id && stocksPreview.length > 0 && (
-                      <div>
-                        <label className="text-xs text-gray-500 mb-1 block">
-                          Preview Akun Tersimpan ({stocksPreview.length})
-                        </label>
-                        <textarea
-                          value={stocksPreview.join("\n")}
-                          readOnly
-                          rows={6}
-                          className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/40 font-mono text-xs resize-none"
-                        />
-                      </div>
-                    )}
-
-                    <Toggle
-                      checked={form.modeEditStock}
-                      onChange={(v) => setForm({ ...form, modeEditStock: v })}
-                      label="Mode Edit Stock (ganti semua)"
-                    />
-
-                    <div>
-                      <label className="text-xs text-gray-500 mb-1 block">
-                        {form.modeEditStock ? "Edit Stock Akun" : "Tambah Stock Akun"}
-                        {bulkLines > 0 && ` (${bulkLines} akun)`}
-                      </label>
-                      <textarea
-                        value={form.bulkStock}
-                        onChange={(e) => setForm({ ...form, bulkStock: e.target.value })}
-                        rows={6}
-                        placeholder={`Satu akun per baris.\nContoh: ${formatHint}`}
-                        className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent font-mono text-xs resize-none"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                <div>
-                  <label className="text-xs text-gray-500 mb-1 block">Deskripsi</label>
-                  <textarea
-                    value={form.description}
-                    onChange={(e) => setForm({ ...form, description: e.target.value })}
-                    rows={3}
-                    className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent text-sm resize-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs text-gray-500 mb-1 block">
-                    Syarat & Ketentuan
-                  </label>
-                  <textarea
-                    value={form.terms}
-                    onChange={(e) => setForm({ ...form, terms: e.target.value })}
-                    rows={3}
-                    className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent text-sm resize-none"
-                  />
-                </div>
-
-                <div className="grid sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-gray-500 mb-1 block">Tipe Cashback</label>
-                    <select
-                      value={form.cashbackType}
-                      onChange={(e) =>
-                        setForm({ ...form, cashbackType: e.target.value as CashbackType })
-                      }
-                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent text-sm"
-                    >
-                      <option value="nominal">Potongan Nominal</option>
-                      <option value="percent">Persen</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-500 mb-1 block">
-                      Cashback {form.cashbackType === "percent" ? "(%)" : "(Rp)"}
-                    </label>
-                    <input
-                      type="number"
-                      min={0}
-                      value={form.cashbackValue}
-                      onChange={(e) =>
-                        setForm({ ...form, cashbackValue: Number(e.target.value) || 0 })
-                      }
-                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent text-sm"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="text-xs text-gray-500 mb-1 block">Harga Jual (Rp)</label>
-                    <input
-                      type="number"
-                      min={0}
-                      value={form.price}
-                      onChange={(e) =>
-                        setForm({ ...form, price: Number(e.target.value) || 0 })
-                      }
-                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-500 mb-1 block">Profit (Rp)</label>
-                    <input
-                      type="number"
-                      min={0}
-                      value={form.profit}
-                      onChange={(e) =>
-                        setForm({ ...form, profit: Number(e.target.value) || 0 })
-                      }
-                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-500 mb-1 block">Mode Bulking</label>
-                    <input
-                      type="number"
-                      min={0}
-                      value={form.modeBulking}
-                      onChange={(e) =>
-                        setForm({ ...form, modeBulking: Number(e.target.value) || 0 })
-                      }
-                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent text-sm"
-                    />
-                    <p className="text-[10px] text-gray-400 mt-1">Default 0 = non-bulk</p>
-                  </div>
-                </div>
-
-                {form.id && (
-                  <Toggle
-                    checked={form.isActive}
-                    onChange={(v) => setForm({ ...form, isActive: v })}
-                    label="Tampilkan Produk"
-                  />
-                )}
-
-                {error && (
-                  <p className="text-sm text-red-500 bg-red-50 dark:bg-red-900/20 p-2 rounded-lg">
-                    {error}
-                  </p>
-                )}
-              </div>
-
-              <div className="flex gap-2 p-5 border-t border-gray-100 dark:border-slate-800">
-                <button
-                  onClick={() => setModal("none")}
-                  className="flex-1 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 text-sm font-medium"
-                >
-                  Batal
-                </button>
-                <button
-                  onClick={handleSubmit}
-                  disabled={saving}
-                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-500 text-white font-medium disabled:opacity-60"
-                >
-                  {saving ? "Menyimpan…" : "Simpan"}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {modal === "import" && (
+        {importOpen && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -889,7 +386,7 @@ export default function ProductsPage() {
               <div className="flex items-center justify-between p-5 border-b border-gray-100 dark:border-slate-800">
                 <h3 className="text-lg font-bold">Import Akun</h3>
                 <button
-                  onClick={() => setModal("none")}
+                  onClick={() => setImportOpen(false)}
                   className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800"
                 >
                   <X className="w-5 h-5" />
@@ -915,7 +412,7 @@ export default function ProductsPage() {
                     )}
                   </select>
                 </div>
-                <Toggle
+                <ImportToggle
                   checked={importReplace}
                   onChange={setImportReplace}
                   label="Mode Edit Stock (ganti semua)"
@@ -932,24 +429,24 @@ export default function ProductsPage() {
                     className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent font-mono text-xs resize-none"
                   />
                 </div>
-                {error && (
+                {importError && (
                   <p className="text-sm text-red-500 bg-red-50 dark:bg-red-900/20 p-2 rounded-lg">
-                    {error}
+                    {importError}
                   </p>
                 )}
                 <div className="flex gap-2 pt-2">
                   <button
-                    onClick={() => setModal("none")}
+                    onClick={() => setImportOpen(false)}
                     className="flex-1 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 text-sm font-medium"
                   >
                     Batal
                   </button>
                   <button
                     onClick={handleImportSubmit}
-                    disabled={saving}
+                    disabled={importSaving}
                     className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium disabled:opacity-60"
                   >
-                    {saving ? "Menyimpan…" : `Upload ${importLines || ""}`.trim()}
+                    {importSaving ? "Menyimpan…" : `Upload ${importLines || ""}`.trim()}
                   </button>
                 </div>
               </div>
@@ -993,7 +490,7 @@ function StatCard({
   );
 }
 
-function Toggle({
+function ImportToggle({
   checked,
   onChange,
   label,

@@ -15,13 +15,28 @@ const codeSchema = z
 const configSchema = z
   .object({
     terms: z.string().max(2000).optional(),
+    shortDescription: z.string().max(500).optional(),
     cashbackType: z.enum(["nominal", "percent"]).optional(),
     cashbackValue: z.number().finite().min(0).max(100_000_000).optional(),
     profit: z.number().finite().min(0).max(100_000_000).optional(),
     modeBulking: z.number().int().min(0).max(10_000).optional(),
     stockFormat: z.string().max(120).optional(),
+    defaultAutoDelivery: z.boolean().optional(),
   })
   .strict()
+  .optional()
+  .nullable();
+
+// Accepts either a normal http(s) URL (capped 500 chars) or a data: URL up to
+// ~500KB so the drag-and-drop foto picker can store the image inline without a
+// separate upload endpoint.
+const imageSchema = z
+  .string()
+  .max(500_000)
+  .refine(
+    (s) => /^https?:\/\//i.test(s) || /^data:image\//i.test(s),
+    "Foto harus berupa URL http(s) atau data:image",
+  )
   .optional()
   .nullable();
 
@@ -31,8 +46,8 @@ const CreateSchema = z.object({
   code: codeSchema,
   description: z.string().max(2000).optional().nullable(),
   price: moneySchema,
-  image: z.string().url().max(500).optional().nullable(),
-  banner: z.string().url().max(500).optional().nullable(),
+  image: imageSchema,
+  banner: imageSchema,
   config: configSchema,
 });
 
@@ -43,8 +58,8 @@ const UpdateSchema = z.object({
   code: codeSchema.optional(),
   description: z.string().max(2000).optional().nullable(),
   price: moneySchema.optional(),
-  image: z.string().url().max(500).optional().nullable(),
-  banner: z.string().url().max(500).optional().nullable(),
+  image: imageSchema,
+  banner: imageSchema,
   isActive: z.boolean().optional(),
   config: configSchema,
 });
